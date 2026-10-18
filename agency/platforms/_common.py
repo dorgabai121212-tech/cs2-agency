@@ -26,15 +26,21 @@ class ApiError(RuntimeError):
 class RealAdapter(PlatformAdapter):
     """PlatformAdapter with Hebrew missing-credential errors and secret-scrubbed failures.
 
-    Subclasses implement ``_upload``; ``upload`` keeps the base DRY_RUN guarantee (no network).
+    Subclasses implement ``_upload``; ``upload`` keeps the base DRY_RUN guarantee (no network
+    unless this platform is live). A live platform without credentials fails honestly, also
+    without any network call.
     """
 
+    not_connected_he: str = "הפלטפורמה לא מחוברת — חבר אותה בעמוד החיבורים"
+
     def upload(self, plan: PostPlan) -> PostResult:
-        if self.settings.dry_run:
+        if self.dry_run:
             return self.dry_run_result(plan)
         missing = self.missing_secrets()
         if missing:
             return self.fail(f"{MISSING_CREDS_HE}: {', '.join(missing)}")
+        if not self.configured():
+            return self.fail(self.not_connected_he)
         try:
             return self._upload(plan)
         except Exception as exc:  # fail closed and honest
@@ -64,9 +70,9 @@ class RealAdapter(PlatformAdapter):
         return text[:1000]
 
     def can_call_api(self, external_id: str | None) -> bool:
-        """Stats/comments only for real ids, outside dry run, with credentials."""
+        """Stats/comments only for real ids, on a live platform, with credentials."""
         return bool(external_id) and not str(external_id).startswith("dryrun-") \
-            and not self.settings.dry_run and self.configured()
+            and not self.dry_run and self.configured()
 
     def timeout(self) -> tuple[int, int]:
         return HTTP_TIMEOUT

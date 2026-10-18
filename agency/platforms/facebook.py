@@ -118,7 +118,7 @@ class FacebookAdapter(RealAdapter):
                 for c in data.get("data", [])][:limit]
 
     def reply_comment(self, comment_id: str, text: str) -> bool:
-        if self.settings.dry_run or not self.configured() or not comment_id:
+        if self.dry_run or not self.configured() or not comment_id:
             return False
         try:
             self._request("POST", f"{GRAPH_BASE}/{comment_id}/comments", "Facebook reply",

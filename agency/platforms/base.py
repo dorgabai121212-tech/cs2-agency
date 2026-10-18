@@ -48,6 +48,20 @@ class PlatformAdapter:
     def enabled(self) -> bool:
         return bool(self.platform_config.get("enabled", False))
 
+    # ------------------------------------------------------------------ live / training
+    @property
+    def dry_run(self) -> bool:
+        """Training mode for THIS platform: no network unless the owner switched it live.
+
+        Global ``dry_run: false`` makes every platform live; otherwise only platforms with
+        ``publishing.platforms.<key>.live: true`` (see :meth:`Settings.platform_live`).
+        """
+        return not self.settings.platform_live(self.key)
+
+    def is_live(self) -> bool:
+        """Effective live state: switched live AND connected (credentials present)."""
+        return (not self.dry_run) and self.configured()
+
     # ------------------------------------------------------------------ actions
     def dry_run_result(self, plan: PostPlan) -> PostResult:
         """Fake, clearly-marked result for DRY_RUN mode. No network."""
@@ -59,8 +73,8 @@ class PlatformAdapter:
                           url=None, error=None)
 
     def upload(self, plan: PostPlan) -> PostResult:
-        """Upload per ``plan``. DRY_RUN → fake result without network. Errors → ok=False."""
-        if self.settings.dry_run:
+        """Upload per ``plan``. Training mode → fake result without network. Errors → ok=False."""
+        if self.dry_run:
             return self.dry_run_result(plan)
         try:
             self.require_credentials()
@@ -71,7 +85,7 @@ class PlatformAdapter:
                               url=None, error=f"{type(exc).__name__}: {exc}")
 
     def _upload(self, plan: PostPlan) -> PostResult:
-        """Real upload; subclasses override. Called only when not dry_run and configured."""
+        """Real upload; subclasses override. Called only when live and configured."""
         raise NotImplementedError(f"{self.key}: real upload not implemented")
 
     def fetch_stats(self, external_id: str) -> dict:

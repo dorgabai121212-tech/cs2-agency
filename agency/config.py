@@ -27,6 +27,15 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+def _is_true(value: Any) -> bool:
+    """Strict truthiness for safety switches: only True / "true" / "yes" / "on" / "1"."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "on", "1")
+    return False
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     """Return a new dict: ``base`` recursively updated with ``override``."""
     out = copy.deepcopy(base)
@@ -44,6 +53,7 @@ class Settings:
 
     raw: dict = field(default_factory=dict)
     root: Path = field(default_factory=Path.cwd)
+    config_path: Path | None = None  # the owner's config.yaml (target of the settings writer)
 
     def get(self, dotted: str, default: Any = None) -> Any:
         """Look up a dotted key such as ``"finance.monthly_budget_ils"``."""
@@ -61,6 +71,17 @@ class Settings:
         if isinstance(value, str):
             return value.strip().lower() not in ("false", "0", "no", "off")
         return value is not False
+
+    def platform_live(self, key: str) -> bool:
+        """Owner's "real upload" switch for one platform (credentials are checked elsewhere).
+
+        Global ``dry_run: false`` makes every platform live. While the global ``dry_run`` is
+        true (the master safety), a platform is live only with an explicit
+        ``publishing.platforms.<key>.live: true``. Anything unclear means training mode.
+        """
+        if not self.dry_run:
+            return True
+        return _is_true(self.get(f"publishing.platforms.{key}.live", False))
 
     @property
     def data_dir(self) -> Path:
@@ -153,7 +174,10 @@ def load_settings(path: Path | None = None) -> Settings:
         if not isinstance(loaded, dict):
             raise ValueError(f"config file {path} must contain a mapping at top level")
         data = loaded
-    return Settings(raw=_deep_merge(DEFAULTS, data), root=root)
+    config_path = Path(path) if path is not None else root / "config.yaml"
+    if config_path.name == "config.example.yaml":  # never write into the example file
+        config_path = root / "config.yaml"
+    return Settings(raw=_deep_merge(DEFAULTS, data), root=root, config_path=config_path)
 
 
 def secret(name: str) -> str | None:
