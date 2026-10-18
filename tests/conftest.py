@@ -16,22 +16,26 @@ _SECRET_VARS = [
     "TIKTOK_ACCESS_TOKEN", "META_ACCESS_TOKEN", "IG_USER_ID", "FB_PAGE_ID", "X_API_KEY",
     "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET", "REDDIT_CLIENT_ID",
     "REDDIT_CLIENT_SECRET", "REDDIT_USERNAME", "REDDIT_PASSWORD", "DISCORD_WEBHOOK_URL",
-    "ZERNIO_API_KEY", "TELEGRAM_BOT_TOKEN", "YOUTUBE_OAUTH_JSON",
+    "ZERNIO_API_KEY", "TELEGRAM_BOT_TOKEN", "YOUTUBE_OAUTH_JSON", "CLAUDE_CODE_OAUTH_TOKEN",
 ]
 
 
 @pytest.fixture(autouse=True)
 def _hermetic_secrets(monkeypatch: pytest.MonkeyPatch):
-    """Never read the real OS keyring or the owner's real C:\\CS2_STUDIO from tests.
+    """Never read the real OS keyring or the owner's real C:\\CS2_STUDIO from tests, and never
+    start the real ``claude`` CLI (the brain stays mock unless a test installs a fake one).
 
     Tests that need a keyring install a fake backend and delete AGENCY_KEYRING themselves.
     """
     monkeypatch.setenv("AGENCY_KEYRING", "off")
     monkeypatch.setenv("AGENCY_STUDIO_DIR", "off")
+    monkeypatch.setenv("AGENCY_CLAUDE_CLI", "off")
     monkeypatch.delenv("AGENCY_CLI_LANG", raising=False)
     try:
         from agency.config import clear_secret_cache
+        from agency.llm_cli import clear_cache
         clear_secret_cache()
+        clear_cache()
     except ImportError:  # pragma: no cover
         pass
     yield

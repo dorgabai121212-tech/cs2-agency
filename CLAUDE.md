@@ -35,12 +35,12 @@ Binding specs:
 4. **No fake engagement.** No bots, no bought views, likes or followers, no spam and no vote manipulation. Respect platform ToS and rate limits. Reddit and Discord posts go only to the places the owner listed in config. Do not add such features.
 5. **Secrets stay local and are never shown.**
    - `agency.config.secret(NAME)` looks them up in this order: `os.environ` (`.env` is loaded into it), then OS keyring service `cs2-agency`, then a **read-only** fallback to the studio's keyring service `cs2studio`.
-   - The fallback uses aliases: `ZERNIO_API_KEY→zernio`, `META_ACCESS_TOKEN→meta_page_token`, `TELEGRAM_BOT_TOKEN→telegram_bot`, `YOUTUBE_OAUTH_JSON→youtube_oauth`.
+   - The fallback uses aliases: `ZERNIO_API_KEY→zernio`, `META_ACCESS_TOKEN→meta_page_token`, `TELEGRAM_BOT_TOKEN→telegram_bot`, `YOUTUBE_OAUTH_JSON→youtube_oauth`, `CLAUDE_CODE_OAUTH_TOKEN→claude_token`.
    - New secrets go to keyring `cs2-agency` via `store_secret` (else `.env`).
    - **Never write to, delete from or "fix" the `cs2studio` keyring.**
    - Secrets never go into `config.yaml`, logs, the DB, events, LLM prompts or API responses. The API returns names, `connected`, `account_name`, `source` and `problem` only.
    - Never print, read aloud, copy or commit `.env`, anything in `data/secrets/` (Google client secret, YouTube token, HMAC key) or `client_secret*.json`.
-6. **Offline tests.** With no `ANTHROPIC_API_KEY`, or with `AGENCY_MOCK_LLM=1`, the LLM layer returns deterministic mock output. Tests need no network, no ffmpeg, no keyring and no studio: `tests/conftest.py` sets `AGENCY_KEYRING=off` and `AGENCY_STUDIO_DIR=off`.
+6. **Offline tests.** With `AGENCY_MOCK_LLM=1`, or with no API key and no usable Claude Code, the LLM layer returns deterministic mock output. Tests need no network, no ffmpeg, no keyring, no studio and no real `claude`: `tests/conftest.py` sets `AGENCY_KEYRING=off`, `AGENCY_STUDIO_DIR=off` and `AGENCY_CLAUDE_CLI=off` (CLI tests use a fake `claude` script).
 7. **Fail closed and honestly.** An adapter error sets post status `failed` with the error text. Never report success that did not happen. Zernio "still processing" is a failure until confirmed. Never hard-delete a published video: unpublishing makes it private.
 8. **The manager can never approve.** It has no approve tool, by design and covered by tests. Do not add one. Telegram "אשר הכל" is the owner's own tap, signed with HMAC and bound to the paired chat.
 9. **The studio is read-only.**
@@ -63,7 +63,15 @@ Binding specs:
 - `agency/settings_store.py`: the schema-validated, atomic `config.yaml` writer (it keeps `config.yaml.bak`), the `.env` writer and `set_platform_live`.
 - `agency/db.py`: SQLite storage for videos, posts, approvals, ledger, events, staff status and key-value data.
 - `agency/models.py`: dataclasses and the `VideoStatus` enum.
-- `agency/llm.py`: the Claude wrapper (`complete`, `complete_json`, `run_tools`) plus mock mode. Catch `LLMError` around it.
+- `agency/llm.py`: the team's brain (`complete`, `complete_json`, `run_tools`, `image_block`). Catch `LLMError` around it.
+  - Backends via `llm.backend: auto|api|claude_cli|mock` (default auto). `LLM.backend` says which one runs; `LLM.mock` is True only when the answers are canned (mock, or the CLI resting).
+  - auto order: `AGENCY_MOCK_LLM=1` → mock; `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` → api; a usable `claude` → claude_cli; else mock.
+  - claude_cli has a per-day cap `llm.cli_daily_calls` (db kv `llm.cli_calls`); when used up it falls back to mock until tomorrow with one event "המוח נח להיום". Every real call is logged (backend, purpose, duration, ok), never the prompt.
+  - In claude_cli mode `run_tools` runs the tools itself first (`Tool.snapshot_inputs`; tools that change something never run that way) and makes ONE call without tools.
+- `agency/llm_cli.py`: the claude_cli backend (the owner's own Claude Code plan, $0). Detection runs only `claude --version` / `--help` (cached; `claude.exe` preferred over `claude.cmd`). Each call is `claude -p --output-format json` with list args, the prompt on stdin, a private temp cwd, `--no-session-persistence --strict-mcp-config --setting-sources project` (+ `--safe-mode`), `--tools ""` and `--disallowedTools Bash,Edit,Write,WebFetch,WebSearch,NotebookEdit,Agent`.
+  - **Never pass `ANTHROPIC_API_KEY` (or any agency secret) to the child** — it is removed from the child env; `CLAUDE_CODE_OAUTH_TOKEN` goes into the child env only, never argv.
+  - **Tools stay off**, except `Read` for analyst frames copied into the temp dir (`--tools Read --add-dir <frames>`, no unscoped `--allowedTools Read`).
+  - Do not add `--bare`: it makes Claude Code accept only an API key and ignore the owner's login.
 - `agency/pipeline.py` and `agency/scheduler.py`:
   - `run_pipeline` chains analyst, editor, copywriter, strategist, then posts, then the approval.
   - `execute_approval` carries out an approved item.
@@ -98,7 +106,7 @@ AGENCY_MOCK_LLM=1 .venv/bin/pytest -q                                   # tests 
 .venv/bin/agency                       # no command = dashboard (+ scheduler, inbox watcher, Telegram)
 .venv/bin/agency init | upload PATH --title T | status | approvals | approve ID | reject ID
 .venv/bin/agency budget | expense AMT CAT DESC | income AMT SRC DESC | report | brief | chat
-.venv/bin/agency analytics | tick | retry POST_ID | platforms | dashboard
+.venv/bin/agency analytics | tick | retry POST_ID | platforms | brain | dashboard
 .venv/bin/agency import [PATH...] [--yes] [--no-history] | connect PLATFORM [--reset] | live PLATFORM on|off
 ```
 On Windows the paths are `.venv\Scripts\agency.exe`. Install with `install.cmd` (or `install.ps1 -Unattended` from scripts). Start, restart and stop with `start.ps1 [-Restart|-Stop|-Foreground]`.

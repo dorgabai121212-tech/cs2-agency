@@ -480,6 +480,17 @@ class DB:
 
     def kv_set(self, key: str, value: Any) -> None:
         with self._conn() as c:
-            c.execute("INSERT INTO kv (key, value) VALUES (?, ?) "
-                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                      (key, json.dumps(value, ensure_ascii=False, default=str)))
+            self.kv_set_in(c, key, value)
+
+    @staticmethod
+    def kv_get_in(conn: sqlite3.Connection, key: str, default: Any = None) -> Any:
+        """``kv_get`` through ``conn`` (inside its transaction, e.g. :meth:`immediate`)."""
+        r = conn.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+        return default if r is None else _loads(r["value"], default)
+
+    @staticmethod
+    def kv_set_in(conn: sqlite3.Connection, key: str, value: Any) -> None:
+        """``kv_set`` through ``conn`` (inside its transaction, e.g. :meth:`immediate`)."""
+        conn.execute("INSERT INTO kv (key, value) VALUES (?, ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                     (key, json.dumps(value, ensure_ascii=False, default=str)))

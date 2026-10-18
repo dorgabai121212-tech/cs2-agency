@@ -756,6 +756,7 @@
       el("span", { cls: "ap-kicker", text: "קליפ מוכן" }),
       el("h3", { cls: "ap-title", id: tid, text: c.title || "קליפ" }),
       showQuote ? el("p", { cls: "ap-quote", dir: "auto", text: c.main_title }) : null,
+      c.note_he ? el("div", { cls: "cfo warn" }, [icon("alert"), el("span", { text: "הערה מהצוות: " + c.note_he })]) : null,
       el("div", { cls: "ap-line" }, [el("span", { text: "יעלה ל:" }),
         el("span", { cls: "chips" }, (c.platforms || []).map(pchip))]),
     ]);
@@ -2459,6 +2460,7 @@
       settings = await api("/api/settings");
       fillForm(settings);
       renderLiveSwitches(settings);
+      renderBrain(settings);
     } catch (e) { toast(e.message, "err"); }
     loadTelegramState();
     if (settings && getPath(settings, "dashboard.remote_access")) loadRemote(false);
@@ -2605,6 +2607,7 @@
     const on = advancedOn();
     $("advanced-toggle").setAttribute("aria-checked", String(on));
     $("advanced-link").classList.toggle("hidden", !on);
+    $("brain-box").classList.toggle("hidden", !on);
     $("nav-advanced").classList.toggle("hidden", !on);
   }
 
@@ -2654,7 +2657,7 @@
   const ACTOR_HE = {
     manager: "המנכ\"ל", analyst: "אנליסט וידאו", editor: "עורך", copywriter: "קופירייטר", strategist: "אסטרטג",
     publisher: "מפרסם", promoter: "מקדם", community: "קהילה", analytics: "אנליסט נתונים", finance: "כספים",
-    owner: "אתה", scheduler: "מתזמן", pipeline: "צוות", inbox: "תיקייה", telegram: "טלגרם", importer: "ייבוא",
+    owner: "אתה", scheduler: "מתזמן", pipeline: "צוות", inbox: "תיקייה", telegram: "טלגרם", importer: "ייבוא", brain: "המוח",
   };
   const CLI = [["מצב כללי", "agency status"], ["אישורים שמחכים", "agency approvals"], ["העלאת פוסטים שהגיע זמנם", "agency tick"],
     ["ייבוא מהסטודיו", "agency import"], ["מצב הפלטפורמות", "agency platforms"], ["דוח כספים חודשי", "agency report"]];
@@ -2744,6 +2747,18 @@
     }
     const table = el("div", { cls: "table-wrap" }, [el("table", { cls: "table" }, [el("thead", {}, [el("tr", {}, ["פלטפורמה", "פעיל", "מפתחות", "דרך", "מתג", "בפועל", "תקלה"].map((h) => el("th", { text: h })))]), tb])]);
     return card("מצב טכני של הפלטפורמות" + (data.dry_run ? " · dry_run: true" : ""), "plug", [table], true);
+  }
+  // who thinks for the team (read-only; settings → advanced section)
+  function renderBrain(s) {
+    const b = ((s && s.info) || {}).llm || {};
+    const line = $("brain-line");
+    if (!line) return;
+    clear(line);
+    let text = "המוח של הצוות: " + (b.label_he || "מצב דמו");
+    if (b.backend === "claude_cli" && b.resting) text += " · נח עד מחר";
+    else if (b.backend === "claude_cli" && b.daily_cap) text += " · היום " + (b.calls_today || 0) + " מתוך " + b.daily_cap;
+    line.className = "status-line " + (b.backend === "mock" || b.resting ? "warn" : "ok");
+    append(line, [el("span", { cls: "sd" }), text]);
   }
   function advCli() {
     return card("פקודות שימושיות (בחלון הפקודות, בתיקיית הסוכנות)", "terminal", [el("div", { cls: "cli" }, CLI.map(([label, cmd]) =>

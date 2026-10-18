@@ -94,8 +94,16 @@ class Manager(StaffMember):
 
     # ------------------------------------------------------------------ tools
     def tools(self) -> list[Tool]:
-        """The manager's tool belt. Read-only/safe only — no approve, spend or publish tool."""
+        """The manager's tool belt. Read-only/safe only — no approve, spend or publish tool.
+
+        ``snapshot_inputs`` (claude_cli brain, which runs the tools itself before ONE call):
+        the read-only tools run with defaults, ``explain_plan`` for the newest clips; tools
+        that change something (promotion requests, moving a post) or reach the platforms
+        (analytics) never run that way.
+        """
         obj = {"type": "object", "properties": {}}
+        recent = [{"video_id": v.id} for v in self.db.list_videos(3)
+                  if v.id is not None and v.status != VideoStatus.NEW][:2]
         return [
             Tool("get_status", "Overall agency status: videos by status, pending approvals, "
                  "staff status, dry_run and publishing mode.", obj, self._t_status),
@@ -112,19 +120,20 @@ class Manager(StaffMember):
                  {"type": "object", "properties": {"video_id": {"type": "integer"}}},
                  self._t_posts),
             Tool("run_analytics", "Refresh stats from platforms and return insights.", obj,
-                 lambda _i: Analyst(self.ctx).refresh()),
+                 lambda _i: Analyst(self.ctx).refresh(), snapshot_inputs=[]),
             Tool("propose_promotion", "Ask the promoter for promotion ideas for a video. Creates "
                  "PENDING approvals only; nothing is executed or paid.",
                  {"type": "object", "properties": {"video_id": {"type": "integer"}},
-                  "required": ["video_id"]}, self._t_promote),
+                  "required": ["video_id"]}, self._t_promote, snapshot_inputs=[]),
             Tool("schedule_reschedule", "Move a not-yet-published post to a new future time "
                  "(ISO 8601; naive = channel time zone). Does not publish or approve anything.",
                  {"type": "object", "properties": {"post_id": {"type": "integer"},
                                                    "iso": {"type": "string"}},
-                  "required": ["post_id", "iso"]}, self._t_reschedule),
+                  "required": ["post_id", "iso"]}, self._t_reschedule, snapshot_inputs=[]),
             Tool("explain_plan", "Explain the strategist's plan (platforms, times, why) for a "
                  "video.", {"type": "object", "properties": {"video_id": {"type": "integer"}},
-                            "required": ["video_id"]}, self._t_explain),
+                            "required": ["video_id"]}, self._t_explain,
+                 snapshot_inputs=recent),
         ]
 
     def _t_status(self, _input: dict | None = None) -> dict:

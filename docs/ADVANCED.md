@@ -22,6 +22,7 @@
 13. [ה-API של לוח הבקרה](#13-ה-api-של-לוח-הבקרה)
 14. [פיתוח ובדיקות](#14-פיתוח-ובדיקות)
 15. [פתרון בעיות](#15-פתרון-בעיות)
+16. [המוח של הצוות: Claude Code, מפתח או דמו](#16-המוח-של-הצוות-claude-code-מפתח-או-דמו)
 
 ---
 
@@ -54,7 +55,8 @@
 | `agency/config.py` | `Settings`, `load_settings()`, `secret()` (סדר החיפוש בסעיף 7), `platform_live()`, `platform_via()` |
 | `agency/settings_store.py` | כתיבה בטוחה ל-`config.yaml` (סכמה, כתיבה אטומית, `config.yaml.bak`) ול-`.env` |
 | `agency/db.py`, `models.py` | SQLite: סרטונים, פוסטים, אישורים, ספר הכספים, אירועים, מצב הצוות, kv |
-| `agency/llm.py` | עטיפה ל-Claude + מצב הדגמה (בלי מפתח או `AGENCY_MOCK_LLM=1`) |
+| `agency/llm.py` | המוח של הצוות: בחירת מנוע (`api` / `claude_cli` / `mock`), תקרה יומית, יומן קריאות (סעיף 16) |
+| `agency/llm_cli.py` | המנוע `claude_cli`: מוצא את Claude Code ומריץ `claude -p` על המנוי שלך |
 | `agency/pipeline.py`, `scheduler.py` | שרשרת העבודה, ביצוע אישור, `tick` |
 | `agency/brand.py` | פרופיל המותג ואכיפה בקוד |
 | `agency/home.py` | המשפט של המנכ"ל, התוצאות, הצוות וההתקדמות (מסך הבית) |
@@ -153,7 +155,8 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[platforms,dev]'
 | `agency analytics` | משיכת נתונים ותובנות |
 | `agency tick` | פרסום מה שהגיע זמנו (המתזמן עושה את זה כל דקה) |
 | `agency retry POST_ID` | ניסיון חוזר לפוסט שנכשל, בלי אישור חדש |
-| `agency platforms` | טבלה: פעילה, חיבור (כולל "דרך הסטודיו הקיים"), נתיב (`zernio`/`direct`), אימון/חי |
+| `agency platforms` | טבלה: פעילה, חיבור (כולל "דרך הסטודיו הקיים"), נתיב (`zernio`/`direct`), אימון/חי. בסוף: מי המוח |
+| `agency brain` | מי חושב בשביל הצוות (Claude Code / מפתח / דמו), הגרסה והנתיב של Claude Code, וכמה קריאות היום מתוך התקרה |
 | `agency import [PATH...] [--yes] [--no-history]` | ייבוא מהסטודיו הקיים, ואחר כך סריקת קבצי חיבור (סעיף 8) |
 | `agency connect PLATFORM [--reset]` | מקלידים מפתחות (מוסתרים), נשמר בכספת ונבדק חיבור אמיתי. גם `telegram` |
 | `agency live PLATFORM on\|off [--yes]` | מתג ההעלאה האמיתית לפלטפורמה אחת. `on` שואל "בטוח?" ומסרב לפלטפורמה לא מחוברת |
@@ -170,8 +173,10 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[platforms,dev]'
 | `AGENCY_CLI_LANG` | `he` או `en` להודעות ה-CLI. ב-Windows ברירת המחדל `en` |
 | `AGENCY_KEYRING=off` | בלי כספת: מפתחות רק מ-`.env` ומהסביבה (גם בבדיקות) |
 | `AGENCY_STUDIO_DIR` | נתיב הסטודיו הקיים, או `off` לניתוק (אחרי `studio.dir` ב-config) |
-| `AGENCY_MOCK_LLM=1` | מצב הדגמה בלי קריאות ל-Claude |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | המוח של הצוות. בלי מפתח = מצב הדגמה. **בתשלום**, וכרגע נקרא רק מ-`.env` או מהסביבה |
+| `AGENCY_MOCK_LLM=1` | מצב הדגמה בלי קריאות ל-Claude (גובר על כל הגדרה) |
+| `AGENCY_CLAUDE_CLI` | `off` = לא להשתמש ב-Claude Code (הבדיקות עושות את זה). נתיב = להשתמש בדיוק בקובץ הזה |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | מפתח בתשלום. אם הוא קיים, `auto` בוחר בו לפני Claude Code. נקרא רק מ-`.env` או מהסביבה |
+| `CLAUDE_CODE_OAUTH_TOKEN` | לא חובה: טוקן ארוך של `claude setup-token`. עובר רק לסביבה של תהליך ה-`claude` (סעיף 16) |
 
 ---
 
@@ -186,7 +191,7 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[platforms,dev]'
 | `channel` | `name`, `handle`, `language` (שפת הבעלים; הטקסטים לפלטפורמות באנגלית), `niche` |
 | `brand` | `name`, `handle`, `bio`, `hashtags` (תמיד ראשונים), `blocked_words`, `style_notes`, `ai_label` (טקסט / `true` / `false`), `music_credit` |
 | `dry_run` | המתג הראשי של מצב אימון (סעיף 5). ברירת מחדל `true` |
-| `llm` | `model`, `effort` (low…max), `max_tokens`, `fallbacks` |
+| `llm` | `model`, `effort` (low…max), `max_tokens`, `fallbacks`, `backend` (`auto\|claude_cli\|api\|mock`), `claude_path`, `cli_timeout_s` (240), `cli_daily_calls` (60) |
 | `publishing` | `mode: approve\|auto`, `timezone`, `default_times.<פלטפורמה>: "HH:MM"`, `quiet_hours.{enabled,start,end}`, `stale_publishing_minutes`, `platforms.<פלטפורמה>.*` |
 | `publishing.platforms.<key>` | `enabled`, `live`, `via: zernio\|direct` (יוטיוב/שורטס/טיקטוק), `privacy`/`privacy_level`, `format` (פייסבוק: `auto\|reels\|video`), `min_delay_after_youtube_min` (אינסטגרם, 30), `subreddits` (רדיט), `zernio_account_id` |
 | `finance` | `monthly_budget_ils`, `max_single_spend_ils` (שניהם 0 = אין הוצאות) |
@@ -307,6 +312,7 @@ publishing:
 | `META_ACCESS_TOKEN` | `meta_page_token` |
 | `TELEGRAM_BOT_TOKEN` | `telegram_bot` |
 | `YOUTUBE_OAUTH_JSON` | `youtube_oauth` |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude_token` |
 
 - **לעולם לא כותבים ל-`cs2studio`.** ניתוק פלטפורמה מוחק רק את העותקים שלנו (הכספת `cs2-agency`, `.env`,
   והתהליך הנוכחי). מפתח שמשמש פלטפורמה מחוברת אחרת נשאר רק אם היא צריכה גם משהו אחר (טוקן מטא נשאר
@@ -315,14 +321,15 @@ publishing:
 - מפתח שמוקלד באשף (או ב-`agency connect`) נשמר בכספת `cs2-agency` כשהיא עובדת, ואז עותק ישן ב-`.env` מתרוקן.
   כשאין כספת (או עם `AGENCY_KEYRING=off`), הוא נשמר ב-`.env`.
 - מותר לשמור רק שמות מוכרים: ה-`required_secrets` של כל ה-adapters, ובנוסף `ANTHROPIC_API_KEY`,
-  `ZERNIO_API_KEY` ו-`TELEGRAM_BOT_TOKEN`. מזהי מטא (`IG_USER_ID`, `FB_PAGE_ID`) הם לא סודות, ולכן הם נשמרים
+  `ZERNIO_API_KEY`, `TELEGRAM_BOT_TOKEN` ו-`CLAUDE_CODE_OAUTH_TOKEN`. מזהי מטא (`IG_USER_ID`, `FB_PAGE_ID`) הם לא סודות, ולכן הם נשמרים
   ב-`config.yaml` תחת `meta.*`.
 - ה-API של לוח הבקרה אף פעם לא מחזיר ערכים. הוא מחזיר רק שמות, מצב חיבור, שם חשבון ו-`source`
   (`env`/`keyring`/`studio`). כשהמקור הוא `studio`, האריח מראה "מחובר דרך הסטודיו הקיים".
 - מטמון בדיקות החיבור (10 דקות) שומר רק תוצאות, עם טביעת אצבע HMAC במפתח שקיים רק בזיכרון.
 - מפתח ה-HMAC של כפתורי הטלגרם (`AGENCY_HMAC_KEY`) נוצר פעם אחת ונשמר בכספת, או ב-`data/secrets/agency_hmac_key`.
 - `ANTHROPIC_API_KEY`: שכבת ה-LLM קוראת אותו כרגע רק מהסביבה, אז שמים אותו ב-`.env`. הוא עולה כסף,
-  אז מוסיפים אותו רק בהחלטה שלך.
+  אז מוסיפים אותו רק בהחלטה שלך. בלעדיו הצוות חושב עם Claude Code שמותקן אצלך (סעיף 16), והמפתח
+  **אף פעם לא עובר** לתהליך ה-`claude`.
 - סודות לא נכנסים ל-`config.yaml`, ללוגים, ל-DB או להודעות ל-Claude. לא משתפים ולא מעלים ל-git את `.env`,
   `data/secrets/` או קבצי `client_secret*.json` (כולם ב-`.gitignore`).
 
@@ -496,6 +503,71 @@ AGENCY_MOCK_LLM=1 .venv/bin/pytest -q       # בלי רשת, בלי ffmpeg חו�
 | "still processing" (Zernio/טיקטוק) | הסוכנות בודקת לבד כל כמה דקות. `agency retry` בטוח: הוא בודק קודם את הפוסט הקודם ולא מעלה פעמיים |
 | אינסטגרם "נכשל" עם "YouTube first" | הוא יוצא רק 30 דקות אחרי שהיוטיוב של אותו קליפ עלה באמת. לוחצים "נסה שוב" אחרי השעה שבהודעה |
 | הטלפון לא נכנס | אותה רשת Wi-Fi? הסוכנות הופעלה מחדש אחרי ההדלקה? חומת האש של Windows צריכה לאשר את Python ברשת **פרטית** |
-| הכל במצב הדגמה | אין `ANTHROPIC_API_KEY` ב-`.env`. בלי מפתח הצוות כותב טקסטים קבועים. המפתח בתשלום |
+| הכל במצב הדגמה | `agency brain` מראה למה. בדרך כלל Claude Code לא נמצא או לא מחובר: מתקינים, מריצים `claude` פעם אחת ומתחברים, ומפעילים מחדש את הסוכנות. נתיב לא רגיל? `llm.claude_path` |
+| "המוח נח להיום" ביומן | נגמרה התקרה היומית (`llm.cli_daily_calls`). עד חצות (שעון ישראל) הצוות כותב טקסטים מוכנים מראש |
+| "Claude לא מחובר במחשב" | פותחים חלון פקודות, מריצים `claude`, מתחברים עם החשבון שלך ומנסים שוב |
+
+---
+
+## 16. המוח של הצוות: Claude Code, מפתח או דמו
+
+`llm.backend` בוחר מי חושב בשביל הצוות (ברירת מחדל `auto`):
+
+| מנוע | מתי | עולה כסף? |
+|---|---|---|
+| `claude_cli` | Claude Code מותקן ומחובר במחשב (`claude.exe`). זה המצב הרגיל אצלך | לא. משתמש במנוי שלך |
+| `api` | יש `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | כן, לפי שימוש |
+| `mock` | אין אף אחד מהם, או `AGENCY_MOCK_LLM=1` | לא. טקסטים מוכנים מראש |
+
+סדר הבחירה של `auto`: `AGENCY_MOCK_LLM=1` → מפתח API → Claude Code שעובד → דמו. בהגדרות, תחת **מצב מתקדם**,
+מופיעה שורה "המוח של הצוות: Claude (המנוי שלך) / מפתח API / מצב דמו". גם `GET /api/settings` מחזיר
+`llm_backend` (לקריאה בלבד), ו-`agency brain` מראה את אותו דבר באנגלית ב-Windows.
+
+**איך מוצאים את Claude Code** (פעם אחת לכל הפעלה, בלי קריאה בתשלום): `claude --version`, `claude --help`,
+ובדיקה אחת `claude -p --max-turns 1 --system-prompt-file <קובץ שלא קיים>` בלי קלט, שנעצרת על הקובץ החסר לפני
+כל פנייה למודל. הבדיקה הזאת קיימת כי Claude Code מסתיר את `--max-turns` ואת `--system-prompt-file` מ-`--help`
+(נבדק ב-2.1.302); גרסה שלא מכירה דגל עונה "unknown option" ואז הוא לא נשלח.
+סדר החיפוש: `llm.claude_path`, ואז `claude.exe` ב-PATH, `%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe`,
+`%USERPROFILE%\.local\bin\claude.exe`, `claude.cmd`, ובסוף `~/.local/bin/claude` ו-`~/.claude/local/claude`.
+`claude.exe` עדיף תמיד על `claude.cmd`. התקנת npm בלי `claude.exe` רצה כ-`node cli.js` ישירות (מה שה-`claude.cmd`
+היה מריץ), בלי cmd. רק אם אין `node` נשאר `claude.cmd`: מנגנון ה-cmd של Windows קורא מחדש מרכאות, `%` ו-`&`,
+ולכן כל ארגומנט נבדק, ו-Claude Code ישן בלי `--system-prompt-file` לא משמש דרך `.cmd` בכלל.
+
+**כל קריאה** היא תהליך `claude -p` נפרד:
+- ארגומנטים כרשימה, בלי shell. ההודעה עצמה עוברת ב-stdin (UTF-8), והתשובה היא אובייקט JSON אחד
+  (`--output-format json`). שורות אזהרה לפני ה-JSON לא מפריעות.
+- תיקיית עבודה: תיקייה זמנית פרטית וריקה שנמחקת בסוף. לכן לא נטענים `CLAUDE.md`, הגדרות, hooks או זיכרון.
+- תמיד: `--no-session-persistence --strict-mcp-config --setting-sources project --model <llm.model>
+  --system-prompt-file <קובץ בתיקייה הזמנית> --tools "" --disallowedTools Bash,Edit,Write,WebFetch,WebSearch,NotebookEdit,Agent
+  --max-turns <n>`, ו-`--safe-mode` כשהגרסה שלך תומכת בו. ההנחיות בקובץ ולא בשורת הפקודה, כי שורת פקודה
+  ב-Windows נגמרת ב-32,767 תווים (מילים חסומות והערות סגנון ארוכות עוברות את זה). רק Claude Code ישן בלי
+  `--system-prompt-file` מקבל `--system-prompt <...>` קצר; הנחיות ארוכות מזה נעצרות עם הודעה ברורה.
+- `--max-turns` מגביל כל קריאה (גם קריאת התמונות עם `Read`), כך שקריאה לא מסתובבת עד שנגמר הזמן.
+- **חריגת זמן** עוצרת את כל עץ התהליכים, לא רק את הראשון (`taskkill /T /F` ב-Windows, קבוצת תהליכים
+  ב-Linux/Mac). כך גם `claude.cmd` → `node.exe` נעצר בזמן, והתיקייה הזמנית לא נשארת נעולה.
+- **בלי `--bare`**: הדגל הזה גורם ל-Claude Code לקבל רק `ANTHROPIC_API_KEY` ולהתעלם מההתחברות שלך
+  (נבדק: "Authentication error"). `--safe-mode` + התיקייה הריקה נותנים את אותו בידוד.
+- **הסביבה של התהליך:** **נמחקים** ממנה כל המשתנים שמתחילים ב-`ANTHROPIC_` (מפתח בתשלום, `ANTHROPIC_AUTH_TOKEN`,
+  כותרות או כתובת שרת אחרות), המתגים לספקי ענן (`CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY`,
+  `AWS_BEARER_TOKEN_BEDROCK`), כל מפתחות הסוכנות (Zernio, מטא, `YOUTUBE_OAUTH_JSON` וכו') וכל משתנה ששמו נראה
+  כמו סוד (`..._TOKEN`, `..._SECRET`, `..._API_KEY`, `..._PASSWORD`), כדי שהחשבון יהיה המנוי שלך ולא מפתח בתשלום. אם `secret("CLAUDE_CODE_OAUTH_TOKEN")` מוצא טוקן (סביבה, הכספת שלנו, או לקריאה
+  בלבד `cs2studio/claude_token` של הסטודיו), הוא נכנס **רק** לסביבה של התהליך, אף פעם לא לשורת הפקודה. אם Claude
+  דוחה טוקן שמור, מנסים פעם אחת בלעדיו (עם ההתחברות של המחשב). מודל שלא כלול במנוי → ניסיון אחד עם ברירת המחדל.
+- תשובת JSON: `--json-schema` ו-`structured_output`. אם אין, לוקחים את אובייקט ה-JSON הראשון מהטקסט, בודקים
+  שכל השדות החובה קיימים, ומנסים עוד פעם אחת. אחר כך `LLMError` עם הודעה קצרה ונקייה.
+- **תמונות (האנליסט):** הפריימים מועתקים לתיקייה הזמנית, ו-Claude מקבל רק את הכלי `Read`
+  (`--tools Read --add-dir <frames>`) והנתיבים המלאים בהודעה. בלי `--allowedTools Read`, כך שקריאה מחוץ
+  לתיקייה הזמנית נחסמת ע"י Claude Code (נבדק). ב-API נשארים בלוקים של base64 (המפתח הפרטי `_path` מוסר).
+- **המנכ"ל בצ'אט:** בלי כלים. הסוכנות מריצה קודם את הכלים לקריאה בלבד (מצב, אישורים, תקציב, סרטונים, פוסטים,
+  התוכנית של שני הקליפים האחרונים) ושולחת ל-Claude תמונת מצב אחת. כלים שמשנים משהו (בקשת קידום, הזזת פוסט)
+  או פונים לפלטפורמות (`run_analytics`) לא רצים כך. **אין כלי אישור** בשום מנוע.
+- שגיאה, סירוב, קוד יציאה שונה מ-0 או חריגה מ-`llm.cli_timeout_s` (240 שניות) → `LLMError` עם סיבה קצרה,
+  בלי סביבה, בלי טוקנים ובלי הפלט הגולמי. בשרשרת העבודה זה מסמן את הסרטון "נכשל" (אפשר לנסות שוב).
+- **תקרה יומית:** `llm.cli_daily_calls` (ברירת מחדל 60) נספרת ב-DB (`kv llm.cli_calls`, לפי היום בשעון ישראל).
+  כל תהליך `claude` שומר לעצמו מקום לפני שהוא מתחיל, בפעולה אחת נעולה (`BEGIN IMMEDIATE`), כך שגם ניסיון חוזר,
+  כמה קריאות במקביל, או הלוח וה-CLI יחד לא עוברים את התקרה. כשהיא נגמרת, עד מחר הצוות כותב טקסטים מוכנים מראש,
+  וביומן מופיע פעם אחת "המוח נח להיום". `0` = אף קריאה.
+- **יומן:** כל קריאה נרשמת (מנוע, מי ביקש, משך, הצליח או לא), בלי תוכן ההודעה. ביומן הפעילות במצב מתקדם
+  היא מופיעה כ-`[claude_cli] copywriter.write: 21.4s, ok` תחת "המוח".
 
 </div>

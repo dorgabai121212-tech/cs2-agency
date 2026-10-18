@@ -243,6 +243,7 @@ def status_snapshot(ctx: Context) -> dict:
         "dry_run": ctx.settings.dry_run,
         "mode": ctx.settings.get("publishing.mode", "approve"),
         "llm_mock": bool(getattr(ctx.llm, "mock", True)),
+        "llm_backend": str(getattr(ctx.llm, "backend", "mock")),
         "channel": ctx.settings.get("channel.name", "") or "",
         "staff": staff_snapshot(ctx),
         "counts": {"videos": len(videos), "videos_by_status": by_video, "posts": len(posts),
@@ -1221,7 +1222,19 @@ def create_app(ctx: Context | None = None) -> FastAPI:
         bound = app.state.bind_host not in LOCAL_HOSTS
         out["info"].update(training=_training(), remote_devices=remote["devices"],
                            restart_needed=bool(remote["remote_enabled"] and not bound))
+        # read-only: who thinks for the team (claude_cli / api / mock); shown in advanced mode
+        brain = _brain_info()
+        out["llm_backend"] = brain["backend"]
+        out["info"]["llm"] = brain
         return out
+
+    def _brain_info() -> dict:
+        try:
+            info = ctx.llm.brain_info()
+        except Exception:  # a broken brain probe must never break the settings page
+            info = {"backend": "mock", "resting": False}
+        keep = ("backend", "configured", "label_he", "resting", "calls_today", "daily_cap")
+        return {k: info[k] for k in keep if k in info}
 
     @app.get("/api/settings")
     def api_settings() -> dict:
@@ -1233,7 +1246,7 @@ def create_app(ctx: Context | None = None) -> FastAPI:
         from ..inbox import is_enabled, set_enabled
         from ..settings_store import update_config
 
-        body = {k: v for k, v in body.items() if k != "info"}
+        body = {k: v for k, v in body.items() if k not in ("info", "llm_backend")}
         pairs = views.flatten(body)
         unknown = [k for k, _v in pairs if k not in views.SETTINGS_FIELDS]
         if unknown:

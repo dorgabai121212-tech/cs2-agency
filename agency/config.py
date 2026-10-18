@@ -18,7 +18,9 @@ DEFAULTS: dict[str, Any] = {
     "channel": {"name": "", "language": "he", "secondary_language": "en",
                 "niche": "Counter-Strike 2", "handle": ""},
     "dry_run": True,
-    "llm": {"model": "claude-opus-5-5", "effort": "medium", "max_tokens": 16000, "fallbacks": True},
+    # backend: auto | api | claude_cli | mock (auto: API key -> api, Claude Code -> claude_cli)
+    "llm": {"model": "claude-opus-5-5", "effort": "medium", "max_tokens": 16000, "fallbacks": True,
+            "backend": "auto", "claude_path": "", "cli_timeout_s": 240, "cli_daily_calls": 60},
     "publishing": {"mode": "approve", "platforms": {}, "timezone": "Asia/Jerusalem"},
     "finance": {"currency": "ILS", "monthly_budget_ils": 0, "max_single_spend_ils": 0},
     "staff": {"enabled": ["analyst", "editor", "copywriter", "strategist", "publisher",
@@ -171,7 +173,8 @@ class ConfigError(ValueError):
 
 _NUMERIC_KEYS = ("finance.monthly_budget_ils", "finance.max_single_spend_ils",
                  "dashboard.port", "dashboard.max_upload_gb",
-                 "publishing.stale_publishing_minutes")
+                 "publishing.stale_publishing_minutes", "llm.cli_timeout_s",
+                 "llm.cli_daily_calls")
 
 
 def validate_settings(settings: "Settings") -> None:
@@ -239,6 +242,9 @@ STUDIO_ALIASES: dict[str, str] = {
     "META_ACCESS_TOKEN": "meta_page_token",
     "TELEGRAM_BOT_TOKEN": "telegram_bot",
     "YOUTUBE_OAUTH_JSON": "youtube_oauth",
+    # long-lived Claude Code login token (`claude setup-token`); only ever handed to the
+    # child `claude` process's environment (agency.llm_cli)
+    "CLAUDE_CODE_OAUTH_TOKEN": "claude_token",
 }
 # Entry names the studio keeps under ``cs2studio`` (names only; used by the importer).
 STUDIO_KEYRING_NAMES = ("zernio", "meta_page_token", "youtube_oauth", "telegram_bot",

@@ -5,9 +5,10 @@
   file atomically and keeps the previous version as ``config.yaml.bak``.
 - :func:`env_set` / :func:`env_unset` edit ``.env`` atomically, keep comments and line order,
   quote values safely and update ``os.environ`` of this process. Only the secret names the
-  platform adapters declare (plus ``ANTHROPIC_API_KEY``, ``ZERNIO_API_KEY`` and
-  ``TELEGRAM_BOT_TOKEN``) are accepted. (New secrets normally go to the OS keyring through
-  :func:`agency.config.store_secret`; ``.env`` is the fallback.)
+  platform adapters declare (plus ``ANTHROPIC_API_KEY``, ``ZERNIO_API_KEY``,
+  ``TELEGRAM_BOT_TOKEN`` and ``CLAUDE_CODE_OAUTH_TOKEN``) are accepted. (New secrets
+  normally go to the OS keyring through :func:`agency.config.store_secret`; ``.env`` is the
+  fallback.)
 
 Values are never logged or put in exception messages (only names are).
 """
@@ -30,7 +31,8 @@ from .config import PACKAGE_ROOT, DEFAULTS, ConfigError, Settings, _deep_merge, 
 _config_lock = threading.Lock()
 _env_lock = threading.Lock()
 
-EXTRA_ENV_NAMES = ("ANTHROPIC_API_KEY", "ZERNIO_API_KEY", "TELEGRAM_BOT_TOKEN")
+EXTRA_ENV_NAMES = ("ANTHROPIC_API_KEY", "ZERNIO_API_KEY", "TELEGRAM_BOT_TOKEN",
+                   "CLAUDE_CODE_OAUTH_TOKEN")
 # Listed by adapters as "required_secrets" but not secret themselves (ids, a file path,
 # a user name): they may appear in config.yaml (e.g. meta.ig_user_id).
 NOT_SECRET_NAMES = frozenset({"IG_USER_ID", "FB_PAGE_ID", "YOUTUBE_CLIENT_SECRETS_FILE",
@@ -67,6 +69,10 @@ SCHEMA: dict[str, Any] = {
     "llm.effort": ("enum", {"low", "medium", "high", "xhigh", "max"}),
     "llm.max_tokens": "int",
     "llm.fallbacks": "bool",
+    "llm.backend": ("enum", {"auto", "api", "claude_cli", "mock"}),
+    "llm.claude_path": "str",
+    "llm.cli_timeout_s": "number",
+    "llm.cli_daily_calls": "int",
     "publishing.mode": ("enum", {"approve", "auto"}),
     "publishing.timezone": "str",
     "publishing.stale_publishing_minutes": "number",
@@ -179,7 +185,8 @@ def secrets_dir(settings: Settings) -> Path:
 
 def allowed_env_names() -> list[str]:
     """Secret names we may write: every adapter's ``required_secrets`` (direct adapters and
-    the Zernio route) + ANTHROPIC_API_KEY + ZERNIO_API_KEY + TELEGRAM_BOT_TOKEN."""
+    the Zernio route) + ANTHROPIC_API_KEY + ZERNIO_API_KEY + TELEGRAM_BOT_TOKEN +
+    CLAUDE_CODE_OAUTH_TOKEN."""
     from .platforms import registry
 
     names: list[str] = list(EXTRA_ENV_NAMES)

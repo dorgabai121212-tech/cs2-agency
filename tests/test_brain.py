@@ -646,3 +646,46 @@ def test_mock_copy_is_brand_clean_for_every_platform(ctx, tiny_video, platform):
     brand = load_brand(ctx.settings)
     assert copy["title"] and brand.blocked_in(copy["title"] + copy["description"]) == []
     assert "my fail" not in copy["title"].lower()  # never a self-mocking gag
+
+
+def test_internal_notes_never_reach_public_copy_and_go_to_the_owner(ctx, tiny_video, monkeypatch):
+    """A worried writer's HOLD/"do not publish" notes are stripped; its concern is kept for Dor."""
+    from agency.dashboard.views import approval_card
+    from agency.models import Approval
+    from agency.staff.copywriter import strip_internal_markers
+
+    assert strip_internal_markers("[HOLD] Deagle 3K on Mirage") == "Deagle 3K on Mirage"
+    assert strip_internal_markers("Clean line\nHOLD - DO NOT PUBLISH\nBio") == "Clean line\nBio"
+    assert strip_internal_markers("Nothing to remove here") == "Nothing to remove here"
+
+    vid = ctx.db.add_video(str(tiny_video), "Deagle 3K on Mirage")
+    video = ctx.db.get_video(vid)
+    analysis = {"clip_type": "highlight", "map": "Mirage", "weapons": ["Desert Eagle"]}
+
+    def worried(system, user, schema, *, mock_value):
+        assert "note_for_owner" in schema["properties"]
+        return {"posts": [{"platform": p["platform"], "title": "[HOLD] Deagle 3K on Mirage",
+                           "description": "HOLD - DO NOT PUBLISH\nA Deagle 3K on Mirage.",
+                           "tags": ["cs2"], "hashtags": []} for p in mock_value["posts"]],
+                "note_for_owner": "נראה שזה קליפ בדיקה, לא משחק."}
+    monkeypatch.setattr(ctx.llm, "complete_json", worried)
+    copy = Copywriter(ctx).write(video, analysis, ["youtube", "tiktok"])
+    for p, c in copy.items():
+        public = c["title"] + "\n" + c["description"]
+        assert "HOLD" not in public and "DO NOT PUBLISH" not in public.upper(), p
+    assert copy["youtube"]["title"] == "Deagle 3K on Mirage"
+    assert ctx.db.get_video(vid).meta["copy_note_he"] == "נראה שזה קליפ בדיקה, לא משחק."
+
+    aid = ctx.db.add_approval(Approval(id=None, kind="publish", title="t",
+                                       payload={"video_id": vid, "plans": []}, cost_ils=0,
+                                       status="pending", requested_by="manager",
+                                       created_at="2026-10-18T10:00:00+00:00", decided_at=None,
+                                       note=""))
+    card = approval_card(ctx, ctx.db.get_approval(aid))
+    assert card["note_he"] == "נראה שזה קליפ בדיקה, לא משחק."
+
+    def calm(system, user, schema, *, mock_value):
+        return {**mock_value, "note_for_owner": ""}
+    monkeypatch.setattr(ctx.llm, "complete_json", calm)
+    Copywriter(ctx).write(ctx.db.get_video(vid), analysis, ["youtube"])
+    assert not ctx.db.get_video(vid).meta.get("copy_note_he")  # a rewrite without worries clears it

@@ -424,12 +424,12 @@ def status() -> None:
     _dry_run_banner(ctx.settings)
     if cli_lang() == "he":
         mode = "אישור ידני" if snap["mode"] != "auto" else "אוטומטי"
-        console.print(f"מצב פרסום: {mode} | מוח: {'הדגמה (mock)' if snap['llm_mock'] else 'Claude'}")
+        console.print(f"מצב פרסום: {mode} | מוח: {_brain_label(ctx.llm)}")
         console.print(f"תיקיית הסוכנות: {ctx.settings.root} | נתונים: {ctx.settings.data_dir}",
                       markup=False)
     else:
         mode = "owner approves" if snap["mode"] != "auto" else "automatic"
-        console.print(f"Publishing: {mode} | Brain: {'demo (mock)' if snap['llm_mock'] else 'Claude'}")
+        console.print(f"Publishing: {mode} | Brain: {_brain_label(ctx.llm)}")
         console.print(f"Agency folder: {ctx.settings.root} | Data: {ctx.settings.data_dir}",
                       markup=False)
     table = Table(title=t("הצוות", "The team"))
@@ -772,6 +772,46 @@ def platforms() -> None:
     console.print(table)
     console.print(t("חיבור: agency connect <פלטפורמה> · העלאה אמיתית: agency live <פלטפורמה> on",
                     "Connect: agency connect <platform> · Go live: agency live <platform> on"))
+    from .llm import LLM
+    console.print(t("המוח של הצוות: ", "Team brain: ") + _brain_label(LLM(settings)),
+                  markup=False)
+
+
+def _brain_label(llm) -> str:
+    """One line: who thinks for the team (English on Windows)."""
+    try:
+        info = llm.brain_info()
+    except Exception:
+        return t("מצב דמו", "demo mode (canned text)")
+    label = info["label_he"] if cli_lang() == "he" else info["label_en"]
+    if info.get("backend") == "claude_cli" and info.get("resting"):
+        label += t(" — נח עד מחר (נגמרה התקרה היומית)", " — resting until tomorrow (daily cap used)")
+    return label
+
+
+@app.command(help="מי חושב בשביל הצוות: Claude שמותקן אצלך, מפתח בתשלום או מצב דמו.")
+def brain() -> None:
+    from .llm import LLM
+
+    settings = _settings()
+    llm = LLM(settings)
+    info = llm.brain_info()
+    console.print(t("המוח של הצוות: ", "Team brain: ") + _brain_label(llm), markup=False)
+    console.print(t(f"הגדרה: llm.backend = {info['configured']}",
+                    f"Setting: llm.backend = {info['configured']}"), markup=False)
+    if info["backend"] == "claude_cli":
+        cli = llm.cli
+        console.print(t(f"Claude Code {cli.info.version}: {cli.info.shown_path}",
+                        f"Claude Code {cli.info.version}: {cli.info.shown_path}"), markup=False)
+        console.print(t(f"קריאות היום: {info['calls_today']} מתוך {info['daily_cap']}",
+                        f"Calls today: {info['calls_today']} of {info['daily_cap']}"),
+                      markup=False)
+    elif info["backend"] == "mock":
+        console.print(t("אין Claude Code מחובר ואין מפתח — הצוות כותב טקסטים מוכנים מראש. "
+                        "התקן את Claude Code והתחבר פעם אחת, ואז הפעל מחדש.",
+                        "No Claude Code and no API key found: the team writes canned text. "
+                        "Install Claude Code, log in once, then restart the agency."),
+                      markup=False)
 
 
 @app.command("import", help="ייבוא חיבורים קיימים: הסטודיו הקיים, קבצי גוגל ו-.env (שמות בלבד, "

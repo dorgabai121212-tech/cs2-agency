@@ -30,9 +30,28 @@ COPY_SCHEMA: dict[str, Any] = {
                 "hashtags": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["platform", "title", "description", "tags", "hashtags"]}},
+        "note_for_owner": {"type": "string"},
     },
     "required": ["posts"],
 }
+
+# Internal markers that must never reach public copy (the owner's note field carries concerns).
+_INTERNAL_MARKER_RE = re.compile(
+    r"\[\s*(?:HOLD|DRAFT|TODO|TBD|WIP|NOTE)\b[^\]]*\]"
+    r"|\b(?:DO\s+NOT\s+(?:PUBLISH|POST|UPLOAD)|NOT\s+FOR\s+(?:PUBLISHING|PUBLICATION)|ON\s+HOLD)\b"
+    r"|(?-i:\b(?:HOLD|DRAFT|TODO)\b)(?=\s*(?:[-–—:|]|$))",  # all-caps marker + separator only
+    re.I)
+
+
+def strip_internal_markers(text: str) -> str:
+    """Remove HOLD/DRAFT/"do not publish" style notes; lines that only carried one disappear."""
+    lines = []
+    for line in str(text or "").splitlines():
+        cleaned = _INTERNAL_MARKER_RE.sub("", line)
+        if line.strip() and not re.sub(r"[\s\-–—:|.,!]+", "", cleaned):
+            continue  # the whole line was an internal note
+        lines.append(re.sub(r"\s{2,}", " ", cleaned).strip(" -–—:|") if cleaned != line else line)
+    return "\n".join(lines).strip()
 
 YOUTUBE_PLATFORMS = {"youtube", "youtube_shorts"}
 YOUTUBE_DESCRIPTION_BYTES = 5000  # Hebrew letters are 2 bytes each
@@ -200,11 +219,11 @@ def finalize_copy(platform: str, raw: dict, brand: Brand, *, has_ai: bool = Fals
     2. Brand hashtags first, then the writer's, capped per platform (no #fyp spam).
     3. ``enforce_limits`` (lengths, YouTube bytes), then the AI label / music credit lines.
     """
-    title = str(raw.get("title") or "")
+    title = strip_internal_markers(str(raw.get("title") or ""))
     if not title.strip() or brand.blocked_in(title):
         title = fallback_title or brand.clean(title) or brand.name
     title = brand.clean(title)
-    description = brand.clean(raw.get("description") or "")
+    description = brand.clean(strip_internal_markers(raw.get("description") or ""))
     tags = [t for t in (raw.get("tags") or []) if str(t).strip() and brand.is_clean(t)]
     if platform == "reddit":
         hashtags: list[str] = []
@@ -280,7 +299,12 @@ class Copywriter(StaffMember):
             "- x: one punchy line (<= 200 chars), no links, 1-2 hashtags.\n"
             "- reddit: descriptive, humble title, no hashtags, no emojis, no self-promo tone.\n"
             "- discord: a short hype line for Dor's own server.\n"
-            "Return one entry per requested platform.\n\n" + CS2_PLAYBOOK)
+            "Return one entry per requested platform.\n\n"
+            "Public copy is always publish-ready: never write HOLD, DRAFT, TODO, \"do not "
+            "publish\" or any note to Dor inside titles, descriptions, tags or hashtags. If "
+            "something about the clip looks wrong (not gameplay, a test pattern, poor quality, "
+            "a risky detail), say it ONLY in `note_for_owner`: one short, plain Hebrew sentence "
+            "for Dor. Otherwise leave `note_for_owner` empty.\n\n" + CS2_PLAYBOOK)
 
     def write(self, video: Video, analysis: dict, platforms: list[str]) -> dict[str, dict]:
         """Copy per platform: {platform: {title, description, tags, hashtags}} (brand rules and
@@ -313,8 +337,18 @@ class Copywriter(StaffMember):
             raw = by_platform.get(p) or fallbacks[p]
             out[p] = finalize_copy(p, raw, brand, has_ai=has_ai, music=music,
                                    fallback_title=fallbacks[p]["title"])
+        self._keep_owner_note(video, data.get("note_for_owner"))
         self.status("idle", "הכותרות מוכנות")
         return out
+
+    def _keep_owner_note(self, video: Video, note: Any) -> None:
+        """Store the copywriter's private concern on the video (shown on the approval card)."""
+        text = re.sub(r"\s+", " ", str(note or "")).strip()[:300]
+        if video.id is None or (not text and not (video.meta or {}).get("copy_note_he")):
+            return
+        self.db.update_video(video.id, meta={"copy_note_he": text})  # meta is merged; "" clears
+        if text:
+            self.emit(f"הערה מהקופירייטר: {text}", "warning", video.id)
 
     # ------------------------------------------------------------------ mock copy
     @staticmethod

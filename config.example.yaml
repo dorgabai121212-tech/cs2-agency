@@ -52,6 +52,13 @@ llm:
   effort: "medium"             # רמת מאמץ: low | medium | high
   max_tokens: 16000            # אורך תשובה מקסימלי
   fallbacks: true              # אם המודל מסרב — לנסות אוטומטית מודל חלופי בצד השרת
+  # מי חושב בשביל הצוות: auto | claude_cli | api | mock
+  #   auto       = מפתח API אם יש, אחרת Claude Code שכבר מותקן אצלך (המנוי שלך, בלי עלות נוספת), אחרת מצב דמו
+  #   claude_cli = תמיד Claude Code שמותקן במחשב
+  backend: auto
+  claude_path: ""              # נתיב ל-claude.exe אם הוא לא במקום הרגיל (ריק = חיפוש אוטומטי)
+  cli_timeout_s: 240           # כמה שניות לחכות לתשובה אחת של Claude Code
+  cli_daily_calls: 60          # תקרה ביום. אחריה הצוות כותב טקסטים מוכנים עד מחר
 
 # הגדרות פרסום
 publishing:

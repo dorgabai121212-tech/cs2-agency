@@ -219,6 +219,7 @@ def approval_card(ctx: Context, a: Approval, now: datetime | None = None) -> dic
         times = sorted((p for p in plans if parse_iso(p["scheduled_at"])),
                        key=lambda p: parse_iso(p["scheduled_at"]))
         card.update(title=title, main_title=_main_title(plans),
+                    note_he=str(((video.meta or {}) if video else {}).get("copy_note_he") or ""),
                     platforms=[platform_chip(p["platform"]) for p in plans],
                     when_he=times[0]["when_he"] if times else ASAP_HE,
                     plans=plans, chat_prefill=f"לגבי {title}: ")
