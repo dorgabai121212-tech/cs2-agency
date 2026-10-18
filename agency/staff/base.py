@@ -42,10 +42,15 @@ class StaffMember:
         """Primary channel language (e.g. "he")."""
         return self.settings.get("channel.language", "he")
 
-    def status(self, s: str, detail: str = "") -> None:
-        """Update this member's live status (dashboard org chart) and the activity feed."""
+    def status(self, s: str, detail: str = "", *, quiet: bool = False) -> None:
+        """Update this member's live status (dashboard org chart) and the activity feed.
+
+        A bare status with no detail (e.g. back to "idle") and ``quiet`` updates (the chat,
+        the periodic stats pull) change the team row only, without an activity-feed line.
+        """
         self.db.set_staff_status(self.name, s, detail)
-        emit(self.db, self.name, f"{s}: {detail}" if detail else s)
+        if detail and not quiet:
+            emit(self.db, self.name, f"{s}: {detail}")
 
     def emit(self, message: str, level: str = "info", video_id: int | None = None) -> None:
         """Convenience: write to the activity feed as this member."""

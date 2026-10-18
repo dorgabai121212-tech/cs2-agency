@@ -186,9 +186,15 @@ def test_analyst_editor_strategist_mock(ctx, tiny_video):
 
     variants = VideoEditor(ctx).make_variants(video, analysis)
     by_platform = {v.platform: v for v in variants}
-    assert set(by_platform) == {"youtube", "youtube_shorts", "tiktok", "instagram_reels", "x"}
-    assert by_platform["youtube"].path == str(tiny_video)
+    # config.example.yaml mirrors the owner's real accounts: Facebook on, X not connected yet
+    assert set(by_platform) == {"youtube", "youtube_shorts", "tiktok", "instagram_reels",
+                                "facebook"}
     from agency.media import have_ffmpeg
+    assert by_platform["facebook"].path == str(tiny_video)  # a sane MP4 master goes out as-is
+    if have_ffmpeg():  # v2 presets: YouTube always gets the 1440p version (§11.7)
+        assert by_platform["youtube"].path.endswith("youtube_1440.mp4")
+    else:
+        assert by_platform["youtube"].path == str(tiny_video)
     if have_ffmpeg():
         assert by_platform["tiktok"].aspect == "9:16"
         assert by_platform["tiktok"].path != str(tiny_video)

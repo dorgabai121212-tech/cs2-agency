@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>כניסה מהטלפון · סוכנות CS2</title>
+  <link rel="icon" href="data:,">
+  <style nonce="{{ csp_nonce }}">
+    :root {
+      --bg: #0b0f14;
+      --card: #141b24;
+      --field: #0e141b;
+      --line: #263243;
+      --text: #e8edf3;
+      --muted: #8b98a9;
+      --orange: #f5a623;
+      --orange-2: #ffbf4d;
+      --red: #f0524f;
+      --green: #3ccf7a;
+      --font: "Segoe UI", "Rubik", "Assistant", "Heebo", system-ui, -apple-system, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      background: radial-gradient(900px 420px at 85% -10%, rgba(245,166,35,.10), transparent 60%),
+                  radial-gradient(700px 360px at 0% 0%, rgba(59,164,245,.08), transparent 60%), var(--bg);
+      color: var(--text);
+      font: 17px/1.5 var(--font);
+    }
+    main {
+      width: 100%;
+      max-width: 420px;
+      padding: 36px 24px 28px;
+      text-align: center;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, .45);
+    }
+    .logo {
+      width: 68px;
+      height: 68px;
+      margin: 0 auto 18px;
+      display: grid;
+      place-items: center;
+      border-radius: 20px;
+      background: linear-gradient(135deg, var(--orange), var(--orange-2));
+      color: #0b0f14;
+      font-weight: 800;
+      font-size: 1.3rem;
+      letter-spacing: .02em;
+    }
+    h1 { margin: 0 0 8px; font-size: 1.65rem; font-weight: 800; }
+    .lead { margin: 0 0 26px; color: var(--muted); font-size: 1.05rem; }
+    .sr {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+    }
+    .pin {
+      width: 100%;
+      padding: 18px 8px;
+      direction: ltr;
+      text-align: center;
+      letter-spacing: .42em;
+      text-indent: .42em;
+      font: 700 2.6rem/1.1 ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+      color: var(--text);
+      background: var(--field);
+      border: 2px solid var(--line);
+      border-radius: 18px;
+      outline: none;
+      caret-color: var(--orange);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .pin::placeholder { color: #354153; }
+    .pin:focus { border-color: var(--orange); box-shadow: 0 0 0 4px rgba(245, 166, 35, .18); }
+    .pin:disabled { opacity: .45; }
+    .go {
+      width: 100%;
+      min-height: 58px;
+      margin-top: 16px;
+      border: 0;
+      border-radius: 18px;
+      background: var(--orange);
+      color: #0b0f14;
+      font: 800 1.2rem var(--font);
+      cursor: pointer;
+    }
+    .go:hover { background: var(--orange-2); }
+    .go:focus-visible { outline: 3px solid var(--text); outline-offset: 3px; }
+    .go:disabled { opacity: .45; cursor: default; }
+    .msg { min-height: 1.6em; margin: 18px 0 0; font-size: 1.05rem; font-weight: 600; }
+    .msg.err { color: var(--red); }
+    .msg.ok { color: var(--green); }
+    .foot { margin: 26px 0 0; color: var(--muted); font-size: .92rem; }
+    @media (prefers-reduced-motion: no-preference) {
+      .shake { animation: shake .36s ease-in-out; }
+      @keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        20%, 60% { transform: translateX(-8px); }
+        40%, 80% { transform: translateX(8px); }
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="logo" aria-hidden="true">CS2</div>
+    <h1>כניסה מהטלפון</h1>
+    <p class="lead">הקלד את הקוד בן 6 הספרות שמופיע על מסך המחשב.</p>
+    <form id="login-form" novalidate autocomplete="off">
+      <label for="pin" class="sr">קוד כניסה</label>
+      <input id="pin" name="pin" class="pin" type="text" inputmode="numeric" pattern="[0-9]*"
+             autocomplete="one-time-code" enterkeyhint="go" spellcheck="false"
+             placeholder="••••••" aria-describedby="msg" required autofocus>
+      <button id="go" class="go" type="submit">כניסה</button>
+      <p id="msg" class="msg" role="alert" aria-live="assertive"></p>
+    </form>
+    <p class="foot">עובד רק ברשת ה-Wi-Fi של הבית. אחרי כניסה אחת הטלפון נשאר מחובר לחודש.</p>
+  </main>
+  <script nonce="{{ csp_nonce }}">
+    (function () {
+      "use strict";
+      var PIN_LENGTH = 6;
+      var KNOWN = { invalid_format: 1, bad_pin: 1, no_pin: 1, locked: 1, remote_disabled: 1 };
+      var form = document.getElementById("login-form");
+      var input = document.getElementById("pin");
+      var button = document.getElementById("go");
+      var msg = document.getElementById("msg");
+      var busy = false;
+      var lockedUntil = 0;
+      var timer = null;
+
+      function asciiDigits(text) {
+        return String(text || "")
+          .replace(/[٠-٩]/g, function (d) { return String(d.charCodeAt(0) - 0x0660); })
+          .replace(/[۰-۹]/g, function (d) { return String(d.charCodeAt(0) - 0x06F0); })
+          .replace(/[０-９]/g, function (d) { return String(d.charCodeAt(0) - 0xFF10); })
+          .replace(/[^0-9]/g, "")
+          .slice(0, PIN_LENGTH);
+      }
+      function minutesText(m) { return m <= 1 ? "בעוד דקה" : "בעוד " + m + " דקות"; }
+      function show(text, kind) {
+        msg.textContent = text || "";
+        msg.className = "msg" + (kind ? " " + kind : "");
+      }
+      function setEnabled(on) { input.disabled = !on; button.disabled = !on; }
+      function shake() {
+        input.classList.remove("shake");
+        void input.offsetWidth;
+        input.classList.add("shake");
+      }
+      function fallback(status) {
+        if (status === 400) return "הקוד הוא 6 ספרות. נסה שוב.";
+        if (status === 401) return "הקוד לא נכון. נסה שוב.";
+        if (status === 403) return "הגישה מהטלפון כבויה. אפשר להדליק אותה בהגדרות, במחשב.";
+        return "משהו השתבש. נסה שוב בעוד רגע.";
+      }
+      function tick() {
+        clearTimeout(timer);
+        var left = Math.ceil((lockedUntil - Date.now()) / 1000);
+        if (left <= 0) {
+          lockedUntil = 0;
+          setEnabled(true);
+          input.value = "";
+          show("אפשר לנסות שוב.", "");
+          input.focus();
+          return;
+        }
+        show("יותר מדי ניסיונות. אפשר לנסות שוב " + minutesText(Math.ceil(left / 60)) + ".", "err");
+        timer = setTimeout(tick, Math.min(left * 1000, 15000));
+      }
+      function lock(seconds) {
+        lockedUntil = Date.now() + Math.max(1, seconds) * 1000;
+        setEnabled(false);
+        tick();
+      }
+
+      async function submit() {
+        if (busy || lockedUntil) return;
+        var pin = asciiDigits(input.value);
+        if (pin.length !== PIN_LENGTH) {
+          show("הקוד הוא 6 ספרות.", "err");
+          shake();
+          input.focus();
+          return;
+        }
+        busy = true;
+        setEnabled(false);
+        show("בודק…", "");
+        var res;
+        var data = {};
+        try {
+          res = await fetch("/api/auth/login", {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json", "X-Agency-Request": "1" },
+            body: JSON.stringify({ pin: pin })
+          });
+          try { data = (await res.json()) || {}; } catch (e) { data = {}; }
+        } catch (e) {
+          busy = false;
+          setEnabled(true);
+          show("אין חיבור למחשב. בדוק שהמחשב דלוק ושהטלפון באותה רשת Wi-Fi.", "err");
+          return;
+        }
+        busy = false;
+        if (res.ok && data.ok) {
+          show("נכנסת! עוד רגע…", "ok");
+          window.location.replace("/");
+          return;
+        }
+        input.value = "";
+        shake();
+        if (res.status === 429 || data.reason === "locked") {
+          lock(Number(data.retry_after_s) || 600);
+          return;
+        }
+        setEnabled(true);
+        input.focus();
+        show(KNOWN[data.reason] && data.detail ? data.detail : fallback(res.status), "err");
+      }
+
+      input.addEventListener("input", function () {
+        var clean = asciiDigits(input.value);
+        if (clean !== input.value) input.value = clean;
+        if (clean.length === PIN_LENGTH) submit();
+      });
+      form.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        submit();
+      });
+      input.focus();
+    })();
+  </script>
+</body>
+</html>

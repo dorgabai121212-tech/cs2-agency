@@ -359,7 +359,9 @@ def test_registry_mapping():
 def test_registry_enabled_and_unknown(settings):
     from agency.platforms.registry import enabled_keys, get_adapter
 
-    assert "youtube" in enabled_keys(settings) and "facebook" not in enabled_keys(settings)
+    # config.example.yaml mirrors the owner's accounts: Facebook on, X not connected yet
+    assert "youtube" in enabled_keys(settings) and "facebook" in enabled_keys(settings)
+    assert "x" not in enabled_keys(settings)
     with pytest.raises(KeyError):
         get_adapter("myspace", settings)
 

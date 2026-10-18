@@ -54,52 +54,102 @@ VERTICAL_PLATFORMS = {"youtube_shorts", "tiktok", "instagram_reels"}
 HORIZONTAL_PLATFORMS = {"youtube", "facebook", "x", "reddit", "discord"}
 
 # Which platforms fit which clip type, best first (strategist uses this as its baseline).
+# The owner's proven package: every short goes to Shorts, Facebook, Instagram and TikTok.
 PLATFORM_FIT: dict[str, list[str]] = {
-    "ace": ["youtube_shorts", "tiktok", "instagram_reels", "youtube", "x", "reddit", "discord"],
-    "clutch": ["youtube_shorts", "tiktok", "youtube", "instagram_reels", "x", "reddit", "discord"],
-    "funny": ["tiktok", "youtube_shorts", "instagram_reels", "x", "reddit", "discord"],
-    "fail": ["tiktok", "youtube_shorts", "instagram_reels", "x", "discord"],
-    "highlight": ["youtube_shorts", "tiktok", "instagram_reels", "youtube", "x", "discord"],
+    "ace": ["youtube_shorts", "tiktok", "instagram_reels", "facebook", "youtube", "x",
+            "reddit", "discord"],
+    "clutch": ["youtube_shorts", "tiktok", "instagram_reels", "facebook", "youtube", "x",
+               "reddit", "discord"],
+    "funny": ["tiktok", "youtube_shorts", "instagram_reels", "facebook", "x", "reddit",
+              "discord"],
+    "fail": ["tiktok", "youtube_shorts", "instagram_reels", "facebook", "x", "discord"],
+    "highlight": ["youtube_shorts", "tiktok", "instagram_reels", "facebook", "youtube", "x",
+                  "discord"],
     "tutorial": ["youtube", "youtube_shorts", "tiktok", "reddit", "instagram_reels", "discord"],
     "montage": ["youtube", "youtube_shorts", "instagram_reels", "facebook", "x", "discord"],
-    "other": ["youtube_shorts", "tiktok", "youtube", "instagram_reels", "x", "facebook",
+    "other": ["youtube_shorts", "tiktok", "instagram_reels", "facebook", "youtube", "x",
               "discord"],
 }
 
-# Default local posting slots (hour, minute) in the channel time zone (Israel by default).
-# Hebrew audience: after school/work 18:00-22:00; international: 21:00-23:00 IL hits the EU
-# evening and the US East afternoon.
+# Fallback local posting slots (hour, minute) in the channel time zone, used only for platforms
+# without a proven time (``publishing.default_times`` / ``PROVEN_TIMES``). International
+# audience: 21:00-23:00 Israel time hits the EU evening and the US East afternoon.
 POSTING_SLOTS: dict[str, tuple[int, int]] = {
-    "youtube": (17, 30),          # long-form: publish before the evening peak so it indexes
-    "youtube_shorts": (19, 0),
-    "tiktok": (20, 0),
-    "instagram_reels": (20, 30),
-    "facebook": (19, 30),
+    "youtube": (17, 0),
+    "youtube_shorts": (17, 0),
+    "facebook": (17, 40),
+    "instagram_reels": (20, 0),
+    "tiktok": (20, 40),
     "x": (21, 0),
     "reddit": (22, 0),            # r/GlobalOffensive is US/EU-heavy
     "discord": (19, 15),
 }
 
+# The owner's proven times from his live studio (Israel time, SPEC_V2 §11): YouTube 17:00,
+# Facebook 17:40, Instagram 20:00, TikTok 20:40. Config ``publishing.default_times`` overrides.
+PROVEN_TIMES: dict[str, str] = {"youtube": "17:00", "youtube_shorts": "17:00",
+                                "facebook": "17:40", "instagram_reels": "20:00",
+                                "tiktok": "20:40"}
+
+YOUTUBE_FAMILY = ("youtube", "youtube_shorts")
+# Minimum minutes after the (last) YouTube post. Instagram and TikTok cannot be taken back
+# through the API, so they always go out after YouTube is already live (studio rule).
+AFTER_YOUTUBE_MIN: dict[str, int] = {"instagram_reels": 30, "tiktok": 30}
+
+PLATFORM_HE: dict[str, str] = {"youtube": "יוטיוב", "youtube_shorts": "יוטיוב Shorts",
+                               "tiktok": "טיקטוק", "instagram_reels": "אינסטגרם",
+                               "facebook": "פייסבוק", "x": "X", "reddit": "רדיט",
+                               "discord": "דיסקורד"}
+
+CLIP_TYPE_HE: dict[str, str] = {"ace": "אייס", "clutch": "קלאץ'", "funny": "מצחיק",
+                                "fail": "רגע מטורף", "highlight": "הייליט", "tutorial": "טיפ",
+                                "montage": "מונטאז'", "other": "רגע מטורף"}
+
+_HHMM = re.compile(r"^\s*([01]?\d|2[0-3]):([0-5]\d)\s*$")
+
+
+def parse_hhmm(value: object) -> tuple[int, int] | None:
+    """``"17:40"`` -> ``(17, 40)``; None when invalid."""
+    m = _HHMM.match(str(value or ""))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def default_times(settings: Settings) -> dict[str, tuple[int, int]]:
+    """Posting time per platform: config ``publishing.default_times`` > the owner's proven
+    times > generic fallback slots. Invalid config values are ignored."""
+    out = dict(POSTING_SLOTS)
+    for key, value in PROVEN_TIMES.items():
+        out[key] = parse_hhmm(value) or out.get(key, (19, 0))
+    configured = settings.get("publishing.default_times", {}) or {}
+    if isinstance(configured, dict):
+        for key, value in configured.items():
+            hm = parse_hhmm(value)
+            if hm and key in out:
+                out[key] = hm
+    return out
+
+
 CS2_PLAYBOOK = """\
-Shared agency knowledge (Counter-Strike 2 content marketing):
-- Audience: CS2 players aged ~14-30, mostly male, very meme-literate, allergic to clickbait that
-  does not deliver. Israeli audience speaks Hebrew but uses English CS slang (ACE, clutch, eco,
-  rush B, one-tap, flick, wallbang, spray, smoke, molly, lineup, entry, lurk, retake).
-  International audience is English-first (EU + NA), found on r/GlobalOffensive, X and YouTube.
-- Maps: Mirage, Inferno, Dust2, Nuke, Ancient, Anubis, Vertigo, Overpass, Train. Map names are
-  search terms; put them in titles/tags. Weapons (AK-47, AWP, Deagle, M4A1-S, USP-S) too.
-- Clip types: ace, clutch (1vX), funny, fail, highlight, tutorial (smoke/flash lineups, tips),
-  montage. Clutches and aces need context (score, 1v3, eco) to land; tutorials need clarity.
-- Short-form algorithms (YouTube Shorts, TikTok, Instagram Reels) reward watch-through and
-  rewatches: the hook must land in the first 1-2 seconds (start on the action, never on the
-  menu/buy phase), keep it under 60s (15-35s is the sweet spot), vertical 9:16, loopable ending,
-  big readable on-screen text. Captions should provoke comments ("would you have taken this?").
-- YouTube long-form: searchable title (map + clip type + weapon), strong thumbnail, first 2 lines
-  of description matter, 3 hashtags max show above the title, chapters for tutorials.
-- X: short punchy text + native video, 1-2 hashtags (#CS2). Reddit: no hashtags, no clickbait,
-  descriptive title, follow each subreddit's rules, never spam multiple subs at once.
-- Posting times (Israel, Asia/Jerusalem): weekdays 18:00-22:00 after school/work; Friday
-  13:00-16:00; Saturday after ~20:00. International: 21:00-23:00 Israel time.
+Shared agency knowledge (Counter-Strike 2 content marketing for the channel "Imagination"):
+- Channel: movie-grade CS2 moments rebuilt from real demos (cinematic cameras, real motion
+  blur, bullet-time on the deciding bullet), sometimes with a short AI-restyled shot.
+  Tagline: "Legendary CS2 moments. Real demo. Shot like a movie."
+- Audience: the INTERNATIONAL CS2 community, English-first (EU + NA + the rest), players aged
+  ~14-30, very meme-literate, allergic to clickbait that does not deliver. Public copy is in
+  English; the owner (Dor, Israel) reads the team's notes in Hebrew.
+- Maps: Mirage, Inferno, Dust2, Nuke, Ancient, Anubis, Vertigo, Overpass, Train. Map names,
+  weapons (AK-47, AWP, Deagle, M4A1-S, USP-S) and "ace / clutch / 1vX" are search terms.
+- Clip types: ace, clutch (1vX), funny, highlight, tutorial, montage. A clip of an enemy's
+  mistake is framed as the enemy's fail; never self-mocking "fail" gags.
+- Short-form (YouTube Shorts, TikTok, Instagram Reels) rewards watch-through: the hook lands
+  within the first second, 15-30s is the sweet spot, vertical 9:16, loopable ending.
+- YouTube: exactly 3 hashtags (#CS2 #CounterStrike2 #CS2Edit); sell the player and the moment,
+  never the technique. TikTok: first caption line carries the search words, 3-5 hashtags, never
+  #fyp. Instagram: name "Counter-Strike 2" explicitly, max 5 hashtags. X: no links.
+  Reddit: no hashtags, no clickbait, follow each subreddit's rules, never spam several subs.
+- Proven posting times (Israel, Asia/Jerusalem): YouTube 17:00, Facebook 17:40, Instagram
+  20:00, TikTok 20:40. Instagram and TikTok always go at least 30 minutes after YouTube.
+- Never mention skin gambling, case opening, betting, cheats or hacks, giveaways or promo codes.
 - Iron rules: no fake engagement, no bots, no buying views/likes/followers, no spam, no vote
   manipulation, respect platform ToS and rate limits. Money never moves without owner approval.
 """

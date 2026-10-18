@@ -104,7 +104,7 @@ class RedditAdapter(RealAdapter):
             return []
 
     def reply_comment(self, comment_id: str, text: str) -> bool:
-        if self.settings.dry_run or not self.configured() or not comment_id:
+        if self.dry_run or not self.configured() or not comment_id:
             return False
         try:
             self._client().comment(id=comment_id).reply(text[:10000])

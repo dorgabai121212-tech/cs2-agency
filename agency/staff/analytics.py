@@ -38,9 +38,12 @@ class Analyst(StaffMember):
         "concrete next actions (e.g. 'more 1v3 clutches on Shorts at 19:00', 'hooks under 1s'). "
         "Never invent numbers that are not in the data.\n\n" + CS2_PLAYBOOK)
 
-    def refresh(self) -> dict:
-        """Fetch stats for real published posts, aggregate, store and return insights."""
-        self.status("working", "מושך נתונים מהפלטפורמות")
+    def fetch_stats(self, *, quiet: bool = False) -> tuple[list[dict], int, int]:
+        """Pull fresh stats for really published posts (read-only, no LLM).
+
+        Returns ``(published posts, fetched, errors)``. ``quiet`` (the scheduler's periodic
+        pull) logs one summary line instead of one event per failing post.
+        """
         posts = [p for p in self.db.list_posts() if p["status"] == "published"]
         fetched = errors = 0
         adapters: dict[str, Any] = {}
@@ -55,13 +58,23 @@ class Analyst(StaffMember):
                 stats = adapter.fetch_stats(str(ext)) or {}
             except Exception as exc:
                 errors += 1
-                self.emit(f"שליפת נתונים לפוסט #{p['id']} נכשלה: {exc}", "warning", p["video_id"])
+                if not quiet:
+                    self.emit(f"שליפת נתונים לפוסט #{p['id']} נכשלה: {exc}", "warning",
+                              p["video_id"])
                 continue
             if stats:
                 stats = {**stats, "fetched_at": now_iso()}
                 self.db.update_post(p["id"], stats=stats)
                 p["stats"] = stats
                 fetched += 1
+        if quiet and errors:
+            self.emit(f"שליפת נתונים: {errors} פוסטים לא נבדקו הפעם (אין אינטרנט?)", "info")
+        return posts, fetched, errors
+
+    def refresh(self) -> dict:
+        """Fetch stats for real published posts, aggregate, store and return insights."""
+        self.status("working", "מושך נתונים מהפלטפורמות")
+        posts, fetched, errors = self.fetch_stats()
 
         summary = self._aggregate(posts)
         mock = {"insight_he": self._mock_insight(summary), "actions": self._mock_actions(summary)}

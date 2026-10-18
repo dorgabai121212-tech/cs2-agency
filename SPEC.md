@@ -132,6 +132,9 @@ class LLM:
         # tool exceptions -> tool_result is_error=True ; handles stop_reason end_turn / tool_use / pause_turn / refusal / max_tokens
     def image_block(path: Path) -> dict    # staticmethod, base64 jpeg/png block
 ```
+(Later addition, signatures unchanged: `llm.backend: auto|api|claude_cli|mock` and `LLM.backend`.
+`claude_cli` = the owner's installed Claude Code via `agency/llm_cli.py`, on his plan; auto picks it
+when there is no API key. Tests keep it off with `AGENCY_CLAUDE_CLI=off`. See CLAUDE.md.)
 Claude API usage (from official docs — follow exactly):
 - `import anthropic; client = anthropic.Anthropic()` (credentials from env).
 - model from config, default `"claude-opus-5-5"`. Do NOT pass `thinking` with budget_tokens, do NOT pass temperature,

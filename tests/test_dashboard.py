@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from agency.dashboard.app import create_app, sanitize_filename
 
 HEADERS = {"X-Agency-Request": "1"}
+PC = ("127.0.0.1", 50000)  # TestClient's default peer "testclient" is not loopback (v2)
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def app(ctx, no_network):
 
 @pytest.fixture
 def client(app):
-    with TestClient(app, base_url="http://127.0.0.1:8765", headers=HEADERS) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765", client=PC, headers=HEADERS) as c:
         yield c
 
 
@@ -40,20 +41,22 @@ def test_index_page_is_hebrew_rtl(client):
     assert res.status_code == 200
     assert 'dir="rtl"' in res.text and 'lang="he"' in res.text
     assert "/static/app.js" in res.text
-    assert "DRY-RUN" in res.text
+    # v2: friendly wording ("מצב אימון" = training mode) instead of the old DRY-RUN banner
+    assert "מצב אימון" in res.text and "DRY-RUN" not in res.text
+    assert "Imagination" in res.text
     assert "cdn" not in res.text.lower()
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/style.css").status_code == 200
 
 
 def test_post_without_csrf_header_is_refused(app):
-    with TestClient(app, base_url="http://127.0.0.1:8765") as c:
+    with TestClient(app, base_url="http://127.0.0.1:8765", client=PC) as c:
         res = c.post("/api/finance/expense", json={"amount": 5, "category": "ads"})
     assert res.status_code == 403
 
 
 def test_foreign_host_is_refused(app):
-    with TestClient(app, base_url="http://evil.example.com", headers=HEADERS) as c:
+    with TestClient(app, base_url="http://evil.example.com", client=PC, headers=HEADERS) as c:
         assert c.get("/api/status").status_code == 403
 
 

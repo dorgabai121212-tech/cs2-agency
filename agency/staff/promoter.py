@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..brand import Brand, load_brand
 from ..config import secret
 from ..models import Approval, PostPlan, Video
 from ._playbook import CS2_PLAYBOOK, truncate
@@ -49,22 +50,38 @@ class Promoter(StaffMember):
 
     name = "promoter"
     title_he = "מקדם"
-    role_prompt = (
-        "You are the Promoter of a CS2 creator's agency. You grow reach ONLY with legitimate "
-        "methods: a pinned comment that sparks discussion, a YouTube community post, an "
-        "announcement in the creator's OWN Discord, an honest Reddit post only in subreddits "
-        "the owner listed (follow their rules, no reposting, no vote manipulation), and "
-        "optionally small paid ads (YouTube/Google Ads, TikTok Promote, Meta boost) with a "
-        "realistic ILS budget and Israeli/international gamer targeting. You NEVER suggest "
-        "buying views, likes, followers, bots, engagement pods, spam or sub4sub. Paid "
-        "proposals must fit the remaining budget; if the budget is 0 propose no paid items.\n"
-        "Write pinned_comment/community_post/discord_message in the channel language; "
-        "reddit_title in English.\n\n" + CS2_PLAYBOOK)
+
+    @property
+    def brand(self) -> Brand:
+        return load_brand(self.settings)
+
+    @property
+    def role_prompt(self) -> str:  # type: ignore[override]
+        brand = self.brand
+        return (
+            f'You are the Promoter of "{brand.name}" ({brand.handle}), a Counter-Strike 2 '
+            "channel of movie-grade moments rebuilt from real demos. You grow reach ONLY with "
+            "legitimate methods: a pinned comment that sparks discussion, a YouTube community "
+            "post, an announcement in the creator's OWN Discord, an honest Reddit post only in "
+            "subreddits the owner listed (follow their rules, no reposting, no vote "
+            "manipulation), and optionally small paid ads (YouTube/Google Ads, TikTok Promote, "
+            "Meta boost) with a realistic ILS budget and international gamer targeting. You "
+            "NEVER suggest buying views, likes, followers, bots, engagement pods, spam or "
+            "sub4sub. Paid proposals must fit the remaining budget; if the budget is 0 propose "
+            "no paid items.\n"
+            "All public texts (pinned_comment, community_post, discord_message, reddit_title) "
+            "are in ENGLISH, in the brand's voice: funny, trolling, confident, never "
+            "self-mocking. The pinned comment asks ONE question that viewers want to answer. "
+            "Paid targeting and 'why' are short plain Hebrew for the owner.\n\n"
+            + brand.prompt_block() + "\n\n" + CS2_PLAYBOOK)
 
     def propose(self, video: Video, posts: list[dict]) -> list[Approval]:
         """Store organic texts in video.meta and create approvals for actions (crosspost/spend)."""
-        self.status("working", f"מכין הצעות קידום לסרטון #{video.id}")
+        label = (video.title_hint or "").strip()[:40]
+        self.status("working", f"מכין רעיונות קידום ל\"{label}\"" if label
+                    else "מכין רעיונות קידום")
         analysis = video.analysis or {}
+        brand = self.brand
         cfo = CFO(self.ctx)
         budget = cfo.budget_status()
         main = next((p for p in posts if p.get("platform") in ("youtube", "youtube_shorts")),
@@ -72,13 +89,16 @@ class Promoter(StaffMember):
         title = ((main or {}).get("plan") or {}).get("title") or video.title_hint or "CS2"
         data = self.llm.complete_json(
             self.role_prompt,
-            (f"Video #{video.id}: {title}\nAnalysis: {analysis.get('clip_type')} on "
+            (f"Video: {title}\nAnalysis: {analysis.get('clip_type')} on "
              f"{analysis.get('map')}, score {analysis.get('score_1_10')}/10, "
              f"{analysis.get('summary_en')}\nPlatforms planned: "
              f"{[p.get('platform') for p in posts]}\nRemaining paid budget this month: "
              f"{budget['remaining']} ILS (single spend cap {budget['max_single']} ILS)."),
             PROMO_SCHEMA, mock_value=self._mock(video, title, analysis, budget))
 
+        for key in ("pinned_comment", "community_post", "reddit_title"):
+            data[key] = brand.clean(data.get(key) or "")  # blocked words never go out
+        data["discord_message"] = brand.enforce(data.get("discord_message") or title, "discord")
         self.db.update_video(video.id, meta={"promotion": {
             "pinned_comment": data.get("pinned_comment", ""),
             "community_post": data.get("community_post", "")}})
@@ -143,7 +163,7 @@ class Promoter(StaffMember):
                               "warning", video.id)
                 continue
             spent_in_proposals += amount
-            targeting = str(item.get("targeting") or "ישראל, גילאי 16-30, גיימינג")
+            targeting = str(item.get("targeting") or "קהל בינלאומי, גילאי 16-30, גיימינג")
             steps = [s.format(amount=f"{amount:.2f}", days=days, targeting=targeting)
                      for s in _AD_STEPS[platform]]
             out.append(Approval(
@@ -156,17 +176,22 @@ class Promoter(StaffMember):
 
     def _mock(self, video: Video, title: str, analysis: dict, budget: dict) -> dict:
         cs_map = analysis.get("map") or "CS2"
+        weapon = (analysis.get("weapons") or ["AK-47"])[0]
         paid: list[dict] = []
         amount = min(budget["remaining"], budget["max_single"], 50.0)
         if amount >= 10:
             paid.append({"platform": "youtube", "amount_ils": round(amount, 2), "days": 3,
-                         "targeting": "ישראל, גילאי 16-30, תחומי עניין: Counter-Strike, גיימינג",
-                         "why": "הסרטון מקבל ציון גבוה — דחיפה קטנה בימים הראשונים מגדילה "
-                                "את הסיכוי שהאלגוריתם ימשיך להפיץ אורגנית."})
+                         "targeting": "קהל בינלאומי, גילאי 16-30, תחומי עניין: Counter-Strike",
+                         "why": "הקליפ חזק — דחיפה קטנה בימים הראשונים עוזרת לאלגוריתם להמשיך "
+                                "להפיץ אותו לבד."})
+        reddit = f"{weapon} {analysis.get('clip_type') or 'moment'} on {cs_map}, rebuilt from " \
+                 "the real demo (CS2)"
         return {
-            "pinned_comment": f"מה הייתם עושים במקומי ב-{cs_map}? התגובה הכי טובה מקבלת נעיצה",
-            "community_post": f"סרטון חדש עלה: {title}. איזה מפה אתם רוצים שאעלה הבא?",
-            "discord_message": f"קליפ חדש בחוץ! {title} — תגידו מה דעתכם",
-            "reddit_title": f"{analysis.get('summary_en') or title}".rstrip(".") + " (CS2)",
+            "pinned_comment": f"Be honest: would you have taken that fight on {cs_map}? "
+                              "Best answer gets pinned.",
+            "community_post": f"New one is out: {title}. Which map should get the movie "
+                              "treatment next?",
+            "discord_message": f"New clip is out: {title}. Tell us what you think",
+            "reddit_title": reddit.encode("ascii", "ignore").decode(),
             "paid": paid,
         }
