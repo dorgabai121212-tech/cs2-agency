@@ -1,0 +1,66 @@
+# ===========================================================
+#  קובץ ההגדרות של סוכנות CS2
+#  העתק לקובץ config.yaml (הפקודה `agency init` עושה זאת בשבילך).
+#  חשוב: אין לשים כאן סיסמאות או מפתחות! סודות נשמרים רק בקובץ .env
+# ===========================================================
+
+# פרטי הערוץ שלך
+channel:
+  name: ""                     # שם הערוץ
+  language: "he"               # שפה ראשית לכתיבת כותרות ותיאורים
+  secondary_language: "en"     # שפה משנית (לקהל בינלאומי)
+  niche: "Counter-Strike 2"    # הנישה של הערוץ
+  handle: ""                   # שם המשתמש (@) שלך ברשתות
+
+# מצב ניסיון: כל עוד זה true — שום דבר לא באמת עולה לרשתות.
+# הצוות רק מדווח מה *היה* עושה. שנה ל-false רק כשהכול מוגדר ואתה מוכן.
+dry_run: true
+
+# הגדרות מודל הבינה המלאכותית (Claude)
+llm:
+  model: "claude-opus-5-5"     # שם המודל
+  effort: "medium"             # רמת מאמץ: low | medium | high
+  max_tokens: 16000            # אורך תשובה מקסימלי
+  fallbacks: true              # אם המודל מסרב — לנסות אוטומטית מודל חלופי בצד השרת
+
+# הגדרות פרסום
+publishing:
+  # approve = כל העלאה מחכה לאישור שלך בלוח הבקרה / בשורת הפקודה (מומלץ)
+  # auto    = הצוות מתזמן ומעלה לבד
+  mode: approve
+  # אילו פלטפורמות פעילות
+  platforms:
+    youtube: {enabled: true}           # יוטיוב — סרטון רגיל 16:9
+    youtube_shorts: {enabled: true}    # יוטיוב שורטס — אנכי עד 60 שניות
+    tiktok: {enabled: true}            # טיקטוק
+    instagram_reels: {enabled: true}   # אינסטגרם רילס
+    facebook: {enabled: false}         # עמוד פייסבוק
+    x: {enabled: true}                 # X (טוויטר)
+    # רדיט: מפרסמים רק בקהילות שרשמת כאן, למשל: ["GlobalOffensive"]
+    reddit: {enabled: false, subreddits: []}
+    discord: {enabled: false}          # דיסקורד (דרך Webhook שמוגדר ב-.env)
+  timezone: "Asia/Jerusalem"           # אזור זמן לתזמון פוסטים
+  stale_publishing_minutes: 120        # העלאה שנתקעה יותר מזה (התוכנה נסגרה) מסומנת "נכשל"
+
+# כספים — כסף לא זז בלי אישור שלך, אף פעם.
+finance:
+  currency: "ILS"
+  monthly_budget_ils: 0        # תקציב חודשי מקסימלי לקידום (0 = אין הוצאות בכלל)
+  max_single_spend_ils: 0      # סכום מקסימלי להוצאה בודדת (מעל זה — נדחה גם אם אישרת)
+
+# אילו עובדים פעילים בצוות (המנכ"ל תמיד פעיל)
+staff:
+  enabled: [analyst, editor, copywriter, strategist, publisher, promoter, community, analytics, finance]
+
+# ניהול קהילה
+community:
+  auto_reply: false            # false = כל תגובה לצופים מחכה לאישור שלך
+
+# קידום אורגני
+promotion:
+  discord_webhook_enabled: false   # לשלוח הודעה לדיסקורד שלך על כל סרטון חדש
+
+# לוח הבקרה המקומי (דפדפן)
+dashboard:
+  host: "127.0.0.1"            # רק מהמחשב שלך. "0.0.0.0" = רשת ביתית, כניסה רק עם קישור סודי
+  port: 8765

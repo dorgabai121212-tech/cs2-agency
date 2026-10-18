@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cs2-agency"
+version = "0.1.0"
+description = "Local AI marketing agency (staff of AI employees) for a Counter-Strike 2 video creator"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=1.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "python-multipart>=0.0.9",
+    "requests>=2.31",
+    "jinja2>=3.1",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+platforms = [
+    "google-api-python-client>=2.100",
+    "google-auth-oauthlib>=1.2",
+    "tweepy>=4.14",
+    "praw>=7.7",
+]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+agency = "agency.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["agency*"]
+
+[tool.setuptools.package-data]
+agency = ["dashboard/templates/*.html", "dashboard/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

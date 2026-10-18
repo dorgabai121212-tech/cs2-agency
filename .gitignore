@@ -1,0 +1,16 @@
+# secrets & local config
+.env
+config.yaml
+*.token.json
+client_secret*.json
+secrets/
+# runtime data
+data/
+# python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/

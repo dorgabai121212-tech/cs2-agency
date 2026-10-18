@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>חדר הבקרה · סוכנות CS2</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-dry-run="{{ 'true' if dry_run else 'false' }}" data-max-gb="{{ max_upload_gb }}" data-ext="{{ extensions }}">
+  <div id="dryrun-banner" class="dryrun-banner{{ '' if dry_run else ' hidden' }}" role="status">
+    <strong>מצב ניסיון (DRY-RUN) פעיל</strong>
+    <span>שום דבר לא עולה באמת לרשתות — הצוות רק מראה מה היה עושה. לשינוי: <code>dry_run: false</code> בקובץ config.yaml.</span>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">CS2</div>
+      <div>
+        <h1>חדר הבקרה</h1>
+        <div class="sub">סוכנות השיווק{% if channel %} של <span id="channel-name">{{ channel }}</span>{% endif %}</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span id="chip-mode" class="chip">מצב פרסום: …</span>
+      <span id="chip-llm" class="chip">מוח: …</span>
+      <span id="chip-conn" class="chip chip-ok">מחובר</span>
+    </div>
+    <nav class="quicknav" aria-label="ניווט מהיר">
+      <a href="#org">צוות</a>
+      <a href="#approvals">אישורים <span id="nav-pending" class="badge hidden">0</span></a>
+      <a href="#upload">העלאה</a>
+      <a href="#videos">סרטונים</a>
+      <a href="#finance">כספים</a>
+      <a href="#chat">צ'אט</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <!-- Org chart -->
+    <section id="org" class="card span-all">
+      <div class="card-head"><h2>הצוות</h2><span class="muted" id="org-updated"></span></div>
+      <div class="org">
+        <div id="org-manager" class="org-manager"></div>
+        <div class="org-line" aria-hidden="true"></div>
+        <div id="org-staff" class="org-staff"></div>
+      </div>
+    </section>
+
+    <!-- Approvals -->
+    <section id="approvals" class="card span-all">
+      <div class="card-head">
+        <h2>ממתין לאישור שלך</h2>
+        <span class="muted">כסף לא זז ושום דבר לא עולה בלי אישור שלך</span>
+      </div>
+      <div id="approvals-list" class="approvals"></div>
+      <p id="approvals-empty" class="empty hidden">אין כרגע אישורים שמחכים לך.</p>
+    </section>
+
+    <!-- Upload -->
+    <section id="upload" class="card">
+      <div class="card-head"><h2>סרטון חדש</h2></div>
+      <form id="upload-form" class="stack" novalidate>
+        <label id="dropzone" class="dropzone" for="file-input" tabindex="0">
+          <input id="file-input" name="file" type="file" accept=".mp4,.mov,.mkv,.webm,.avi,video/*" class="visually-hidden">
+          <span class="drop-icon" aria-hidden="true">⬆</span>
+          <span class="drop-title">גרור לכאן סרטון או לחץ לבחירה</span>
+          <span class="muted" id="drop-hint">MP4 / MOV / MKV / WEBM / AVI · עד {{ max_upload_gb }}GB</span>
+          <span id="file-name" class="file-name"></span>
+        </label>
+        <label class="field">
+          <span>על מה הקליפ? (לא חובה)</span>
+          <input id="upload-title" type="text" maxlength="200" placeholder="למשל: אייס עם AWP במיראז'">
+        </label>
+        <div id="upload-progress" class="progress hidden" aria-hidden="true"><div class="progress-fill"></div></div>
+        <div id="upload-status" class="form-status" role="status"></div>
+        <button id="upload-btn" type="submit" class="btn btn-primary btn-big" disabled>שלח לצוות</button>
+      </form>
+    </section>
+
+    <!-- Finance -->
+    <section id="finance" class="card">
+      <div class="card-head"><h2>כספים</h2><span class="muted" id="fin-month"></span></div>
+      <div class="budget">
+        <div class="budget-row"><span>נוצל מהתקציב</span><strong id="fin-used">-</strong></div>
+        <div class="progress" id="fin-bar-wrap"><div id="fin-bar" class="progress-fill"></div></div>
+        <div class="stats">
+          <div class="stat"><span class="muted">תקציב</span><strong id="fin-budget">-</strong></div>
+          <div class="stat"><span class="muted">הוצאות</span><strong id="fin-spent">-</strong></div>
+          <div class="stat"><span class="muted">הכנסות</span><strong id="fin-income">-</strong></div>
+          <div class="stat"><span class="muted">נטו</span><strong id="fin-net">-</strong></div>
+        </div>
+        <p class="muted small" id="fin-cap"></p>
+      </div>
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab active" data-tab="expense" role="tab">הוספת הוצאה</button>
+        <button type="button" class="tab" data-tab="income" role="tab">הוספת הכנסה</button>
+      </div>
+      <form id="money-form" class="money-form" novalidate>
+        <input id="money-amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="סכום ₪" required>
+        <input id="money-cat" type="text" maxlength="100" placeholder="קטגוריה (ads, software...)">
+        <input id="money-desc" type="text" maxlength="500" placeholder="תיאור">
+        <button type="submit" class="btn btn-blue" id="money-btn">הוסף הוצאה</button>
+      </form>
+      <div id="money-status" class="form-status" role="status"></div>
+      <details class="ledger">
+        <summary>תנועות החודש</summary>
+        <ul id="ledger-list" class="ledger-list"></ul>
+      </details>
+    </section>
+
+    <!-- Videos & posts -->
+    <section id="videos" class="card span-all">
+      <div class="card-head"><h2>סרטונים ופוסטים</h2></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>#</th><th>סרטון</th><th>מצב</th><th>פוסטים</th><th>נוצר</th></tr></thead>
+          <tbody id="videos-body"></tbody>
+        </table>
+      </div>
+      <p id="videos-empty" class="empty hidden">עוד אין סרטונים. גרור סרטון לתיבת ההעלאה.</p>
+      <h3 class="subhead">פוסטים</h3>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>#</th><th>פלטפורמה</th><th>כותרת</th><th>מצב</th><th>מתי</th><th>קישור</th></tr></thead>
+          <tbody id="posts-body"></tbody>
+        </table>
+      </div>
+      <p id="posts-empty" class="empty hidden">עוד אין פוסטים.</p>
+    </section>
+
+    <!-- Chat -->
+    <section id="chat" class="card">
+      <div class="card-head"><h2>שיחה עם המנכ"ל</h2><span class="muted small" id="chat-mode"></span></div>
+      <div id="chat-log" class="chat-log" aria-live="polite"></div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" maxlength="4000" placeholder="שאל את המנכ&quot;ל משהו… למשל: מה מצב הסרטון האחרון?" autocomplete="off">
+        <button type="submit" class="btn btn-primary" id="chat-btn">שלח</button>
+      </form>
+    </section>
+
+    <!-- Activity feed -->
+    <section id="feed" class="card">
+      <div class="card-head"><h2>פעילות</h2></div>
+      <ul id="events-list" class="feed"></ul>
+    </section>
+
+    <!-- Platforms -->
+    <section id="platforms" class="card span-all">
+      <div class="card-head"><h2>פלטפורמות</h2><span class="muted small">מפתחות API נשמרים רק בקובץ .env</span></div>
+      <div id="platforms-list" class="platforms"></div>
+    </section>
+  </main>
+
+  <footer class="footer muted small">סוכנות CS2 · רץ מקומית על המחשב שלך · בלי בוטים, בלי קניית צפיות</footer>
+  <div id="toast" class="toast hidden" role="alert"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
