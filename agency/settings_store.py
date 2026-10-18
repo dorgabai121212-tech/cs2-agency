@@ -344,15 +344,18 @@ def update_config(settings: Settings, patch: Mapping) -> Settings:
     """Deep-merge ``patch`` into config.yaml (validated, atomic, ``.bak`` kept).
 
     The same ``settings`` object is updated in place (so every holder of the shared Context
-    sees the change) and returned.
+    sees the change) and returned. The patch is merged into the in-memory settings too, so
+    runtime overrides (e.g. ``agency dashboard --host``) survive a save from the dashboard.
     """
     clean = validate_patch(patch)
     path = config_path(settings)
     with _config_lock:
         current = _read_config_file(path, settings.root)
         merged_file = _deep_merge(current, clean)
-        candidate = Settings(raw=_deep_merge(DEFAULTS, merged_file), root=settings.root,
-                             config_path=path)
+        validate_settings(Settings(raw=_deep_merge(DEFAULTS, merged_file), root=settings.root,
+                                   config_path=path))
+        candidate = Settings(raw=_deep_merge(_deep_merge(DEFAULTS, settings.raw), clean),
+                             root=settings.root, config_path=path)
         validate_settings(candidate)
         text = _CONFIG_HEADER + yaml.safe_dump(merged_file, allow_unicode=True,
                                                sort_keys=False, default_flow_style=False)
@@ -366,6 +369,9 @@ def update_config(settings: Settings, patch: Mapping) -> Settings:
 
 
 # --------------------------------------------------------------------------- .env
+_ENV_NEWLINE_RE = re.compile(r"\r\n|\n|\r")
+
+
 def env_path(root: Path) -> Path:
     return Path(root) / ".env"
 
@@ -394,6 +400,11 @@ def check_env_value(name: str, value: Any) -> str:
         raise SettingsError(f"הערך של {name} ריק")
     if any(ch in value for ch in "\r\n\0"):
         raise SettingsError(f"הערך של {name} מכיל ירידת שורה — העתק רק את המפתח עצמו")
+    # Any other control / separator character (form feed, vertical tab, U+2028 ...) is
+    # refused too: str.splitlines() and other tools treat several of them as line breaks,
+    # and a value must never be able to become a second NAME=value line in .env.
+    if any(not ch.isprintable() for ch in value):
+        raise SettingsError(f"הערך של {name} מכיל תו לא רגיל — העתק רק את המפתח עצמו")
     if "${" in value:
         raise SettingsError(f"הערך של {name} מכיל את הרצף ${{ שלא נתמך")
     if len(value) > MAX_ENV_VALUE_LEN:
@@ -401,12 +412,21 @@ def check_env_value(name: str, value: Any) -> str:
     return value
 
 
+def _split_env(text: str) -> list[str]:
+    """Lines exactly as python-dotenv sees them: only \\r\\n, \\n and \\r end a line
+    (``str.splitlines`` would also split on form feeds, U+2028 ... inside a value)."""
+    lines = _ENV_NEWLINE_RE.split(text)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def _env_lines(path: Path) -> list[str]:
     if path.exists():
-        return path.read_text(encoding="utf-8-sig").splitlines()
+        return _split_env(path.read_text(encoding="utf-8-sig"))
     for example in (path.with_name(".env.example"), PACKAGE_ROOT / ".env.example"):
         if example.exists():  # start from the commented template
-            return example.read_text(encoding="utf-8-sig").splitlines()
+            return _split_env(example.read_text(encoding="utf-8-sig"))
     return []
 
 
@@ -467,7 +487,7 @@ def env_file_has(root: Path, name: str) -> bool:
     if not path.exists():
         return False
     try:
-        lines = path.read_text(encoding="utf-8-sig").splitlines()
+        lines = _split_env(path.read_text(encoding="utf-8-sig"))
     except OSError:
         return False
     for line in lines:
@@ -485,7 +505,9 @@ def set_platform_live(settings: Settings, key: str, on: bool) -> Settings:
 
     The caller must have shown the confirm dialog. Turning ON is refused unless the platform
     is connected (credentials present) — a live switch on an unconnected platform would only
-    produce failures.
+    produce failures. Turning ON also enables the platform (``enabled: true``): a platform the
+    staff never plans for (X / Reddit / Discord start disabled) would otherwise show "uploads
+    for real" while nothing ever goes there. Turning OFF keeps it planned, in training.
     """
     from .platforms import registry
 
@@ -495,4 +517,5 @@ def set_platform_live(settings: Settings, key: str, on: bool) -> Settings:
         raise SettingsError("צריך לבחור כן או לא")
     if on and not registry.get_adapter(key, settings).configured():
         raise SettingsError("אי אפשר להעלות באמת לפלטפורמה שלא מחוברת — חבר אותה קודם")
-    return update_config(settings, {"publishing": {"platforms": {key: {"live": on}}}})
+    patch: dict = {"live": on, **({"enabled": True} if on else {})}
+    return update_config(settings, {"publishing": {"platforms": {key: patch}}})

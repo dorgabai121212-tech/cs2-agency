@@ -6,6 +6,10 @@ nothing here imports FastAPI.
 
 Secrets policy: the PIN and session tokens are never stored, logged or returned after
 creation. The DB keeps only a salted scrypt hash of the PIN and sha256 hashes of tokens.
+
+Client identity is the TCP peer (``request.client.host``) only; headers such as
+X-Forwarded-For are never read. Run uvicorn with ``proxy_headers=False`` so it does not
+rewrite the peer from those headers either.
 """
 from __future__ import annotations
 
@@ -20,10 +24,11 @@ import secrets
 import socket
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 TEMPLATES_DIR = HERE / "templates"
@@ -44,6 +49,9 @@ MAX_FAILURES = 5                      # per IP (IPv6: per /64) inside the window
 WINDOW_S = 10 * 60
 LOCKOUT_S = 10 * 60                   # lockout after the 5th failure, counted from it
 GLOBAL_MAX_FAILURES = 30              # all IPs together inside the window -> everyone locked
+GLOBAL_LOCKOUT_MAX_S = 24 * 3600      # each global lockout doubles (10 min, 20, 40 ... 24 h)
+MAX_TOTAL_FAILURES = 100              # wrong PINs since the PIN was made -> the PIN is deleted
+ALERT_WINDOW_S = 24 * 3600            # how long the PC shows "someone tried to guess the PIN"
 MAX_TRACKED_IPS = 500
 
 SESSION_TTL_S = 30 * 24 * 3600
@@ -78,10 +86,12 @@ REASON_INVALID_FORMAT = "invalid_format"
 REASON_NO_PIN = "no_pin"
 REASON_BAD_PIN = "bad_pin"
 REASON_LOCKED = "locked"
+REASON_LOCAL_ONLY = "local_only"
 
 # Owner-facing Hebrew messages (no jargon: these reach the phone screen).
 MSG_REMOTE_DISABLED = "הגישה מהטלפון כבויה. אפשר להדליק אותה בהגדרות, במחשב."
 MSG_LOGIN_REQUIRED = "צריך להיכנס עם הקוד שמופיע על מסך המחשב."
+MSG_LOCAL_ONLY = "את זה אפשר לעשות רק מהמחשב עצמו."
 MSG_INVALID_FORMAT = "הקוד הוא 6 ספרות. נסה שוב."
 MSG_NO_PIN = "עוד אין קוד כניסה. במחשב: הגדרות ← גישה מהטלפון."
 
@@ -173,18 +183,25 @@ def _valid_record(rec: Any) -> bool:
         digest = bytes.fromhex(rec["hash"])
     except (KeyError, TypeError, ValueError):
         return False
+    # OpenSSL's scrypt needs 128*r*(n+2) + 128*r*p bytes; refuse records that would not fit.
     return (2 <= n <= 2 ** 20 and n & (n - 1) == 0 and 1 <= r <= 32 and 1 <= p <= 16
-            and 16 <= len(digest) <= 64)
+            and 16 <= len(digest) <= 64 and 128 * r * (n + p + 2) <= SCRYPT_MAXMEM)
 
 
 def pin_matches(pin: str, record: dict) -> bool:
-    """Constant-time check of ``pin`` against a stored :func:`hash_pin` record."""
+    """Constant-time check of ``pin`` against a stored :func:`hash_pin` record.
+
+    Fails closed: a malformed PIN, a malformed record or a hashing error -> False.
+    """
     clean = normalize_pin(pin)
     if clean is None or not _valid_record(record):
         return False
     expected = bytes.fromhex(record["hash"])
-    actual = _scrypt(clean, bytes.fromhex(record["salt"]), int(record["n"]), int(record["r"]),
-                     int(record["p"]), len(expected))
+    try:
+        actual = _scrypt(clean, bytes.fromhex(record["salt"]), int(record["n"]),
+                         int(record["r"]), int(record["p"]), len(expected))
+    except (ValueError, MemoryError, OverflowError):
+        return False
     return hmac.compare_digest(actual, expected)
 
 
@@ -237,24 +254,51 @@ class PinCheck:
 
 
 def _empty_limits() -> dict:
-    return {"ips": {}, "global": {"fails": [], "locked_until": 0}}
+    return {"ips": {}, "global": {"fails": [], "locked_until": 0}, "strikes": 0, "total": 0,
+            "last_lock": 0, "burned": 0}
 
 
-def _clean_entry(entry: Any, now: float) -> dict:
-    """Drop failures outside the window; a finished lockout starts a clean slate."""
+def _clean_entry(entry: Any, now: float, max_lock_s: float = LOCKOUT_S) -> dict:
+    """Drop failures outside the window; a finished lockout starts a clean slate.
+
+    If the clock went backwards, stamps from the "future" are pulled back to ``now`` (they
+    still count) and a lockout never lasts more than ``max_lock_s`` from ``now``.
+    """
+    empty = {"fails": [], "locked_until": 0}
     if not isinstance(entry, dict):
-        return {"fails": [], "locked_until": 0}
+        return empty
     try:
         locked_until = float(entry.get("locked_until") or 0)
         fails = [float(t) for t in (entry.get("fails") or [])]
     except (TypeError, ValueError):
-        return {"fails": [], "locked_until": 0}
-    if locked_until and now >= locked_until:
-        return {"fails": [], "locked_until": 0}
-    return {"fails": [t for t in fails if 0 <= now - t < WINDOW_S], "locked_until": locked_until}
+        return empty
+    if not math.isfinite(locked_until) or (locked_until and now >= locked_until):
+        return empty
+    locked_until = min(locked_until, now + max_lock_s) if locked_until else 0
+    fails = [min(t, now) for t in fails if math.isfinite(t) and now - t < WINDOW_S]
+    return {"fails": fails, "locked_until": locked_until}
+
+
+def _count(value: Any) -> int:
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, number)
+
+
+def _stamp(value: Any, now: float) -> float:
+    try:
+        stamp = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return min(stamp, now) if math.isfinite(stamp) and stamp > 0 else 0.0
 
 
 def _clean_limits(state: Any, now: float) -> dict:
+    """Clean per-IP and global entries. ``strikes`` (global lockouts so far), ``total``
+    (wrong PINs since the PIN was made) and the alert stamps survive lockouts: they are reset
+    only when a new PIN is made (:func:`set_pin`)."""
     if not isinstance(state, dict):
         return _empty_limits()
     ips_in = state.get("ips") if isinstance(state.get("ips"), dict) else {}
@@ -267,7 +311,10 @@ def _clean_limits(state: Any, now: float) -> dict:
         ranked = sorted(ips.items(), key=lambda kv: max(kv[1]["fails"] or [kv[1]["locked_until"]]),
                         reverse=True)
         ips = dict(ranked[:MAX_TRACKED_IPS])
-    return {"ips": ips, "global": _clean_entry(state.get("global"), now)}
+    return {"ips": ips, "global": _clean_entry(state.get("global"), now, GLOBAL_LOCKOUT_MAX_S),
+            "strikes": _count(state.get("strikes")), "total": _count(state.get("total")),
+            "last_lock": _stamp(state.get("last_lock"), now),
+            "burned": _stamp(state.get("burned"), now)}
 
 
 def _remaining(entry: dict | None, now: float) -> int:
@@ -303,22 +350,94 @@ def ip_key(client_ip: str | None) -> str:
     return str(ip)
 
 
+def global_lockout_s(strikes: int) -> int:
+    """Length of the ``strikes``-th global lockout (1st = 10 min, then doubling, ≤24 h)."""
+    return int(min(GLOBAL_LOCKOUT_MAX_S, LOCKOUT_S * 2 ** max(0, min(int(strikes) - 1, 20))))
+
+
 def _record_failure(db: Any, key: str, now: float) -> PinCheck:
-    def fn(current: Any) -> tuple[dict, PinCheck]:
+    """Count one wrong PIN. Per IP: 5 -> 10 min lockout. Everyone together: 30 in 10 minutes
+    -> every new login locked, each time twice as long (≤24 h). ``MAX_TOTAL_FAILURES`` wrong
+    PINs since the PIN was made -> the PIN is deleted (the PC must make a new one). Every
+    lockout is reported to the owner (activity feed + a note on the PC's home screen)."""
+    def fn(current: Any) -> tuple[dict, tuple[PinCheck, str | None]]:
         state = _clean_limits(current, now)
         entry = state["ips"].setdefault(key, {"fails": [], "locked_until": 0})
         entry["fails"].append(now)
         glob = state["global"]
         glob["fails"] = (glob["fails"] + [now])[-GLOBAL_MAX_FAILURES:]
-        if len(entry["fails"]) >= MAX_FAILURES:
+        state["total"] += 1
+        event = None
+        if state["total"] >= MAX_TOTAL_FAILURES:
+            state.update(burned=now, last_lock=now)
+            return state, (PinCheck(False, REASON_NO_PIN, 0), "burned")
+        if len(entry["fails"]) >= MAX_FAILURES and not entry["locked_until"]:
             entry["locked_until"] = now + LOCKOUT_S
-        if len(glob["fails"]) >= GLOBAL_MAX_FAILURES:
-            glob["locked_until"] = now + LOCKOUT_S
+            event = "ip"
+        if len(glob["fails"]) >= GLOBAL_MAX_FAILURES and not glob["locked_until"]:
+            state["strikes"] += 1
+            glob["locked_until"] = now + global_lockout_s(state["strikes"])
+            event = "global"
+        if event:
+            state["last_lock"] = now
         wait = max(_remaining(entry, now), _remaining(glob, now))
         if wait:
-            return state, PinCheck(False, REASON_LOCKED, 0, wait)
-        return state, PinCheck(False, REASON_BAD_PIN, MAX_FAILURES - len(entry["fails"]))
-    return _kv_mutate(db, LIMITS_KEY, fn)
+            return state, (PinCheck(False, REASON_LOCKED, 0, wait), event)
+        return state, (PinCheck(False, REASON_BAD_PIN, MAX_FAILURES - len(entry["fails"])),
+                       event)
+
+    check, event = _kv_mutate(db, LIMITS_KEY, fn)
+    if event == "burned":
+        clear_pin(db)
+    if event:
+        _report_lockout(db, event, check)
+    return check
+
+
+def _report_lockout(db: Any, event: str, check: PinCheck) -> None:
+    """Tell the owner (activity feed). Never mentions the PIN or who tried."""
+    if event == "burned":
+        text, level = ("היו יותר מדי ניסיונות לנחש את קוד הכניסה מהטלפון, אז מחקתי אותו. "
+                       "כדי לחבר טלפון — צור קוד חדש במחשב (הגדרות ← גישה מהטלפון)."), "error"
+    elif event == "global":
+        text, level = ("מישהו ניסה לנחש את קוד הכניסה מהטלפון — כניסות חדשות נחסמו "
+                       f"{_for_he(check.retry_after_s)}. טלפונים שכבר מחוברים ממשיכים "
+                       "לעבוד."), "warning"
+    else:
+        text, level = ("מישהו הקליד קוד לא נכון כמה פעמים בגישה מהטלפון — הכניסה ממנו נחסמה "
+                       "ל-10 דקות."), "warning"
+    try:
+        from ..events import emit
+        emit(db, "manager", text, level)
+    except Exception:  # duck-typed DBs in tests; the lockout itself already happened
+        pass
+
+
+def _for_he(seconds: float) -> str:
+    """"ל-10 דקות" / "לשעה" / "לשעתיים" / "ל-8 שעות"."""
+    minutes = max(1, math.ceil(float(seconds) / 60))
+    if minutes < 60:
+        return "לדקה" if minutes == 1 else f"ל-{minutes} דקות"
+    hours = max(1, round(minutes / 60))
+    return {1: "לשעה", 2: "לשעתיים"}.get(hours, f"ל-{hours} שעות")
+
+
+def security_alert(db: Any, now: float | None = None) -> dict | None:
+    """For the PC's home screen: ``{"text_he", "at", "pin_deleted"}`` when someone tried to
+    guess the PIN in the last 24 hours (a lockout happened), else None."""
+    now = _now() if now is None else now
+    state = _clean_limits(db.kv_get(LIMITS_KEY), now)
+    last = max(state["last_lock"], state["burned"])
+    if not last or now - last > ALERT_WINDOW_S:
+        return None
+    if state["burned"] and not pin_is_set(db):
+        text = ("היו הרבה ניסיונות לנחש את קוד הכניסה מהטלפון, אז מחקתי אותו. כדי לחבר טלפון "
+                "— צור קוד חדש.")
+    else:
+        text = ("מישהו ניסה לנחש את קוד הכניסה מהטלפון, וחסמתי אותו. אם זה לא היית אתה — "
+                "כדאי ליצור קוד חדש.")
+    return {"text_he": text, "at": _iso(last), "pin_deleted": bool(state["burned"])
+            and not pin_is_set(db)}
 
 
 def _record_success(db: Any, key: str, now: float) -> None:
@@ -333,7 +452,8 @@ def lockout_remaining(db: Any, client_ip: str | None) -> int:
     """Seconds until ``client_ip`` may try a PIN again (0 = not locked)."""
     now = _now()
     state = _clean_limits(db.kv_get(LIMITS_KEY), now)
-    return max(_remaining(state["global"], now), _remaining(state["ips"].get(ip_key(client_ip)), now))
+    entry = state["ips"].get(ip_key(client_ip))
+    return max(_remaining(state["global"], now), _remaining(entry, now))
 
 
 def verify_pin(db: Any, pin: Any, client_ip: str | None) -> PinCheck:
@@ -341,18 +461,26 @@ def verify_pin(db: Any, pin: Any, client_ip: str | None) -> PinCheck:
 
     5 wrong PINs from one IP (IPv6: one /64) within 10 minutes -> that IP is locked for 10
     minutes from the 5th failure; 30 wrong PINs from all IPs together -> every remote login is
-    locked for 10 minutes. While locked, even the right PIN is refused (and not even hashed).
+    locked, 10 minutes the first time and twice as long each next time (≤24 h); 100 wrong PINs
+    since the PIN was made -> the PIN is deleted. Phones already logged in are not affected.
+    While locked, even the right PIN is refused (and not even hashed).
     A malformed PIN is refused without counting; a correct PIN clears the IP's failures.
+    ``client_ip`` must be the TCP peer address (:func:`client_host`), never a header.
     """
     key = ip_key(client_ip)
     with _LOCK:  # serialises check-then-record (and bounds scrypt work to one at a time)
         now = _now()
-        state = _clean_limits(db.kv_get(LIMITS_KEY), now)
-        entry = state["ips"].get(key)
-        wait = max(_remaining(state["global"], now), _remaining(entry, now))
+
+        def gate(current: Any) -> tuple[dict, tuple[int, int]]:
+            # Persisting the cleaned state prunes old entries and pins clock-jump fixes.
+            state = _clean_limits(current, now)
+            entry = state["ips"].get(key)
+            wait = max(_remaining(state["global"], now), _remaining(entry, now))
+            return state, (wait, MAX_FAILURES - len(entry["fails"]) if entry else MAX_FAILURES)
+
+        wait, left = _kv_mutate(db, LIMITS_KEY, gate)
         if wait:
             return PinCheck(False, REASON_LOCKED, 0, wait)
-        left = MAX_FAILURES - len(entry["fails"]) if entry else MAX_FAILURES
         clean = normalize_pin(pin)
         if clean is None:
             return PinCheck(False, REASON_INVALID_FORMAT, left)
@@ -470,6 +598,9 @@ class LoginOutcome:
 
 
 def minutes_he(minutes: int) -> str:
+    if minutes >= 60:
+        hours = max(1, round(minutes / 60))
+        return {1: "בעוד שעה", 2: "בעוד שעתיים"}.get(hours, f"בעוד {hours} שעות")
     return "בעוד דקה" if minutes <= 1 else f"בעוד {minutes} דקות"
 
 
@@ -574,19 +705,28 @@ def require_auth(request: Any, ctx: Any) -> str | None:
     return REASON_LOGIN_REQUIRED
 
 
+def require_local(request: Any) -> str | None:
+    """Gate for PC-only actions (show a new PIN / QR, switch phone access on): None for a
+    loopback client, else ``"local_only"`` — even a logged-in phone is refused."""
+    return None if is_loopback(client_host(request)) else REASON_LOCAL_ONLY
+
+
 def denial(reason: str, path: str) -> tuple[int, dict, str | None]:
-    """How to answer a :func:`require_auth` refusal: ``(status, json_body, redirect_to)``.
+    """How to answer a :func:`require_auth` / :func:`require_local` refusal:
+    ``(status, json_body, redirect_to)``.
 
     A page request needing login gets ``(303, {}, "/login")``; API/static requests get JSON.
     """
     if reason == REASON_LOGIN_REQUIRED:
-        is_page = not (path.startswith("/api/") or path.startswith("/static/"))
+        is_page = not path.startswith(("/api/", "/static/"))
         if is_page and path != LOGIN_PATH:
             return 303, {}, LOGIN_PATH
         return 401, {"ok": False, "reason": reason, "detail": MSG_LOGIN_REQUIRED,
                      "login": LOGIN_PATH}, None
     if reason == REASON_REMOTE_DISABLED:
         return 403, {"ok": False, "reason": reason, "detail": MSG_REMOTE_DISABLED}, None
+    if reason == REASON_LOCAL_ONLY:
+        return 403, {"ok": False, "reason": reason, "detail": MSG_LOCAL_ONLY}, None
     return 403, {"ok": False, "reason": str(reason), "detail": MSG_LOGIN_REQUIRED}, None
 
 
@@ -704,6 +844,19 @@ def qr_svg(url: str, *, dark: str = "#0b0f14", light: str | None = "#ffffff", sc
     qr = segno.make_qr(url, error="m")
     svg = qr.svg_inline(dark=dark, light=light, scale=scale, border=border, omitsize=True)
     return svg.replace("<svg ", f'<svg role="img" aria-label="{html.escape(label)}" ', 1)
+
+
+def start_pairing(db: Any, port: int) -> dict:
+    """New PIN + phone address + QR for the PC screen (gate the endpoint with
+    :func:`require_local`). The PIN is returned this one time; only its hash is kept.
+
+    Returns ``{"pin", "url", "urls", "qr_svg"}``; ``url``/``qr_svg`` are None when this
+    machine has no LAN address (e.g. Wi-Fi off). Existing phone sessions stay valid.
+    """
+    pin = rotate_pin(db)
+    urls = phone_urls(port)
+    url = urls[0] if urls else None
+    return {"pin": pin, "url": url, "urls": urls, "qr_svg": qr_svg(url) if url else None}
 
 
 # --------------------------------------------------------------------------- login page

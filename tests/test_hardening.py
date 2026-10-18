@@ -210,7 +210,8 @@ def test_dashboard_retry_endpoint(ctx, counting, no_network):
     application = create_app(ctx)
     application.state.inline_jobs = True
     pid = _post(ctx, status="failed")
-    with TestClient(application, base_url="http://127.0.0.1:8765", headers=HEADERS) as c:
+    with TestClient(application, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 50000),
+                    headers=HEADERS) as c:
         assert c.post(f"/api/posts/{pid}/retry").json()["ok"] is True
         assert c.post(f"/api/posts/{pid}/retry").status_code == 409
     assert ctx.db.get_post(pid)["status"] == "published"
@@ -256,7 +257,8 @@ def test_dashboard_resumes_interrupted_approval(ctx, no_network):
     application.state.inline_jobs = True
     aid = ctx.db.add_approval(Approval(id=None, kind="other", title="manual"))
     ctx.db.decide_approval(aid, True)
-    with TestClient(application, base_url="http://127.0.0.1:8765", headers=HEADERS) as c:
+    with TestClient(application, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 50000),
+                    headers=HEADERS) as c:
         assert [a["id"] for a in c.get("/api/approvals?status=open").json()] == [aid]
         assert c.post(f"/api/approvals/{aid}/approve", json={}).status_code == 200
         assert c.post(f"/api/approvals/{aid}/approve", json={}).status_code == 409
@@ -302,7 +304,8 @@ def app_client_default(ctx, no_network):
 
     application = create_app(ctx)
     assert application.state.access_key is None
-    with TestClient(application, base_url="http://127.0.0.1:8765", headers=HEADERS) as c:
+    with TestClient(application, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 50000),
+                    headers=HEADERS) as c:
         yield c
 
 

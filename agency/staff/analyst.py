@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import media
+from ..brand import detect_ai
 from ..models import Video
 from ._playbook import CLIP_TYPES, CS2_PLAYBOOK, detect_clip_type, detect_map, detect_weapons
 from .base import StaffMember
@@ -29,9 +30,11 @@ ANALYSIS_SCHEMA: dict[str, Any] = {
                               "required": ["start", "end"]},
         "audience": {"type": "array", "items": {"type": "string"}},
         "score_1_10": {"type": "integer"},
+        "ai_shots": {"type": "boolean"},
     },
     "required": ["clip_type", "map", "weapons", "highlights", "hook_seconds", "mood",
-                 "summary_he", "summary_en", "best_short_window", "audience", "score_1_10"],
+                 "summary_he", "summary_en", "best_short_window", "audience", "score_1_10",
+                 "ai_shots"],
 }
 
 _SUMMARY_HE = {
@@ -48,8 +51,9 @@ class VideoAnalyst(StaffMember):
     name = "analyst"
     title_he = "אנליסט וידאו"
     role_prompt = (
-        "You are the Video Analyst of a marketing agency for a Counter-Strike 2 YouTube/TikTok "
-        "creator. You have watched thousands of CS2 clips and know what goes viral.\n"
+        "You are the Video Analyst of the marketing team of \"Imagination\", a Counter-Strike 2 "
+        "channel of movie-grade moments rebuilt from real demos. You have watched thousands of "
+        "CS2 clips and know what goes viral with the international CS2 audience.\n"
         "From the frames and metadata you receive, identify: the clip type (ace = 5 kills in a "
         "round, clutch = winning a 1vX, funny, fail, highlight, tutorial = lineups/tips, "
         "montage), the map (recognise Mirage palace/A-site, Inferno banana, Dust2 long, Nuke "
@@ -58,15 +62,21 @@ class VideoAnalyst(StaffMember):
         "Pick best_short_window: the strongest 10-45 second stretch for a vertical short, "
         "starting ON the action so the hook lands in the first 1-2 seconds (never start on the "
         "buy menu or a walk). hook_seconds = how many seconds until something exciting happens "
-        "(lower is better). Score 1-10 honestly for viral potential: a clean 1v4 clutch or an "
-        "ACE with a deagle is 8+, a single kill is 3-4. audience = who will care (e.g. 'Israeli "
-        "CS2 players', 'AWPers', 'new players learning Mirage').\n"
-        "Write summary_he in natural Hebrew gamer slang and summary_en in English. Never invent "
-        "details you cannot see; if unsure about the map say \"unknown\".\n\n" + CS2_PLAYBOOK)
+        "(lower is better; the owner wants the hook within 1 second). Score 1-10 honestly for "
+        "viral potential: a clean 1v4 clutch or an ACE with a deagle is 8+, a single kill is "
+        "3-4. audience = who will care (e.g. 'international CS2 players', 'AWPers', 'new "
+        "players learning Mirage').\n"
+        "ai_shots = true when part of the clip is visibly AI-restyled (or the creator's note "
+        "says AI); the copy then carries an AI label.\n"
+        "Write summary_en in English (it feeds the public copy) and summary_he as one short, "
+        "natural Hebrew line for the owner. Never invent details you cannot see; if unsure about "
+        "the map say \"unknown\". A clip of an enemy's mistake is the enemy's fail, never a "
+        "self-mocking one.\n\n" + CS2_PLAYBOOK)
 
     def analyze(self, video: Video) -> dict:
         """Probe + frame grab + Claude vision → analysis dict (see SPEC)."""
-        self.status("working", f"מנתח את סרטון #{video.id}")
+        label = (video.title_hint or "").strip()[:40]
+        self.status("working", f"צופה ב\"{label}\"" if label else "צופה בקליפ")
         info = media.probe(video.path)
         frames: list[Path] = []
         if media.have_ffmpeg():
@@ -88,7 +98,7 @@ class VideoAnalyst(StaffMember):
                                      mock_value=self._mock_analysis(video, duration))
         analysis = self._normalize(raw, duration)
         analysis["probe"] = info
-        self.status("idle", f"ניתוח הושלם: {analysis['clip_type']} ב-{analysis['map'] or '?'}")
+        self.status("idle", "סיימתי לצפות בקליפ")
         return analysis
 
     # ------------------------------------------------------------------ helpers
@@ -96,7 +106,7 @@ class VideoAnalyst(StaffMember):
     def _brief(video: Video, info: dict, n_frames: int) -> str:
         return (
             f"Analyse this CS2 clip.\nFile name: {Path(video.path).name}\n"
-            f"Creator's title hint: {video.title_hint or '(none)'}\n"
+            f"Creator's note / title hint: {video.title_hint or '(none)'}\n"
             f"Probe: duration={info.get('duration')}s, size={info.get('width')}x"
             f"{info.get('height')}, fps={info.get('fps')}, audio={info.get('has_audio')}\n"
             f"{n_frames} frames attached, evenly spaced through the clip in order.\n"
@@ -125,11 +135,13 @@ class VideoAnalyst(StaffMember):
             "mood": "funny" if clip_type in ("funny", "fail") else "hype",
             "summary_he": f"{_SUMMARY_HE.get(clip_type, 'קליפ מהמשחק')} ב-{cs_map} עם "
                           f"{weapons[0]}.",
-            "summary_en": f"A {clip_type} on {cs_map} with the {weapons[0]}.",
+            "summary_en": f"{'An' if clip_type[0] in 'aeiou' else 'A'} {clip_type} on {cs_map} "
+                          f"with the {weapons[0]}.",
             "best_short_window": {"start": round(start, 2), "end": round(end, 2)},
-            "audience": ["Israeli CS2 players", "international CS2 community",
-                         f"{cs_map} players"],
+            "audience": ["international CS2 community", f"{cs_map} players",
+                         "CS2 cinematic edit fans"],
             "score_1_10": {"ace": 8, "clutch": 8, "funny": 7, "tutorial": 6}.get(clip_type, 6),
+            "ai_shots": detect_ai(video.title_hint, Path(video.path).stem),
         }
 
     @staticmethod
@@ -154,6 +166,7 @@ class VideoAnalyst(StaffMember):
             a["hook_seconds"] = 0.0
         for key in ("mood", "summary_he", "summary_en"):
             a[key] = str(a.get(key) or "")
+        a["ai_shots"] = a.get("ai_shots") is True
         win = a.get("best_short_window") or {}
         try:
             start, end = float(win.get("start", 0)), float(win.get("end", 0))

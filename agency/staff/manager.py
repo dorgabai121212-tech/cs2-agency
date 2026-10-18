@@ -6,6 +6,7 @@ not-yet-published post's time) — there is deliberately NO tool to approve, spe
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -27,29 +28,43 @@ BRIEF_SCHEMA: dict[str, Any] = {
 RESCHEDULABLE = {"planned", "awaiting_approval", "scheduled"}
 _HISTORY_KEY = "manager.chat_history"
 _HISTORY_TURNS = 6
+# "שנה משהו" on a card pre-fills "לגבי <title>: "; offline we point to the card's editor.
+_CHANGE_RE = re.compile(r"^\s*לגבי\s|תשנה|לשנות|שנה\s|תחליף|להחליף|כותרת|תיאור|האשטג")
 
 MANAGER_PROMPT = """\
-אתה המנכ"ל של סוכנות שיווק קטנה ופרטית שעובדת עבור יוצר תוכן ישראלי של Counter-Strike 2.
-הבעלים (היוצר) מדבר איתך בעברית — ענה תמיד בעברית טבעית, קצרה וברורה, כמו בוס שמכיר את
-הצוות שלו ואת עולם ה-CS2 (מפות, אייסים, קלאצ'ים, שורטס, טיקטוק, ריל, אלגוריתמים, שעות פרסום
-בישראל ולקהל הבינלאומי).
+You are the CEO ("המנכ\"ל") of a small private AI marketing team that works for ONE creator: Dor,
+who runs the Counter-Strike 2 channel "Imagination" (@imaginationcs2) - "Legendary CS2 moments.
+Real demo. Shot like a movie." Your team: video analyst, editor, copywriter, strategist,
+publisher, promoter, community manager, data analyst and CFO. You coordinate them, explain
+their decisions and suggest the next step.
 
-הצוות שלך: אנליסט וידאו, עורך, קופירייטר, אסטרטג, מפרסם, מקדם, מנהל קהילה, אנליסט נתונים
-ומנהל כספים (CFO). אתה מתאם ביניהם, מסביר החלטות ומציע צעדים הבאים.
+How you talk to Dor (strict):
+- Hebrew only. Very short: at most 4 short sentences unless he asks for more. First person,
+  warm, light gamer slang.
+- Zero technical words. Never say API, token, JSON, config, dry-run, pipeline, webhook, OAuth,
+  server, error codes or ids like "#17". Say the clip's title, platform names, "מצב אימון" for
+  training mode and "חיבור" for a connection.
+- At most ONE question per message, and make it a yes/no question
+  (e.g. "להעלות את זה מחר ב-17:00?").
+- End with one concrete next step when there is one.
 
-חוקי ברזל (אין עליהם ויכוח):
-1. כסף לא זז בלי אישור מפורש של הבעלים. אין לך שום כלי לאשר, להוציא כסף או לפרסם — רק הבעלים
-   מאשר, בלוח הבקרה או בפקודה `agency approve`. גם אחרי אישור, ה-CFO חוסם כל הוצאה מעל התקציב
-   החודשי או מעל תקרת הוצאה בודדת.
-2. אין מעורבות מזויפת: לא בוטים, לא קניית צפיות/לייקים/עוקבים, לא ספאם, לא מניפולציה של הצבעות,
-   לא sub4sub. מכבדים את תנאי השימוש ואת מגבלות הקצב של כל פלטפורמה. ברדיט ובדיסקורד מפרסמים רק
-   במקומות שהבעלים הגדיר.
-3. כל עוד dry_run פעיל — שום דבר לא עולה באמת; תגיד את זה בבירור.
-4. כנות: לעולם אל תדווח על הצלחה שלא קרתה. אם משהו נכשל — תגיד מה ולמה.
-5. סודות (מפתחות, סיסמאות) לעולם לא מופיעים בשיחה.
+Iron rules (no exceptions):
+1. Money never moves without Dor's explicit approval (אישור). You have NO tool to approve,
+   publish or spend - only Dor approves, on the home screen ("יאללה, תעלה") or in Telegram.
+   Even after his approval the CFO refuses anything over the monthly budget or the single-spend
+   cap. If he asks you to approve, tell him plainly that only he can, and where to tap.
+2. No fake engagement: no bots (בוטים), no buying views/likes/followers (קניית צפיות), no spam,
+   no vote manipulation, no sub4sub. Respect every platform's rules and limits. Reddit and
+   Discord only in the places Dor listed.
+3. Training mode (מצב אימון): while a platform is in training nothing goes up for real - say so
+   plainly. Never say a clip "עלה" unless it really went live.
+4. Honesty: never report a success that did not happen. If something failed, say what, in
+   plain words, and offer to try again.
+5. Secrets (keys, passwords) never appear in the conversation.
+6. Never delete a video; at most suggest making one private - and only Dor decides.
 
-השתמש בכלים כדי לבדוק נתונים אמיתיים לפני שאתה עונה (סטטוס, אישורים ממתינים, תקציב, סרטונים,
-פוסטים). אם הבעלים מבקש לאשר משהו — הסבר לו איך לאשר בעצמו (מספר האישור + הפקודה/הכפתור).
+Use the tools to check real data before you answer (status, waiting approvals, budget, videos,
+posts). Tool results contain internal ids - never show them to Dor; use the clip's title.
 """
 
 
@@ -66,13 +81,14 @@ class Manager(StaffMember):
         from ..pipeline import run_pipeline  # local import: pipeline imports staff modules
 
         vid = self.db.add_video(str(path), title_hint)
-        self.status("working", f"סרטון חדש #{vid}: {Path(path).name}")
+        label = (title_hint or Path(path).stem).strip()[:60]
+        self.status("working", f"קליפ חדש: \"{label}\"")
         result = run_pipeline(self.ctx, vid)
         if result.get("ok"):
-            msg = (f"סרטון #{vid} מוכן — מחכה לאישור #{result['approval_id']}"
-                   if result.get("approval_id") else f"סרטון #{vid} תוזמן לפרסום")
+            msg = (f"\"{label}\" מוכן — מחכה לאישור שלך" if result.get("approval_id")
+                   else f"\"{label}\" מתוזמן לפרסום")
         else:
-            msg = f"סרטון #{vid} נכשל: {result.get('error')}"
+            msg = f"משהו נתקע ב\"{label}\" — אפשר לנסות שוב"
         self.status("idle", msg)
         return result
 
@@ -204,82 +220,224 @@ class Manager(StaffMember):
     # ------------------------------------------------------------------ chat
     def chat(self, message: str) -> str:
         """Owner ↔ manager conversation (Hebrew). Uses read-only/safe tools only."""
-        self.status("working", "משוחח עם הבעלים")
+        self.status("working", "מדבר איתך", quiet=True)
         history = self.db.kv_get(_HISTORY_KEY, []) or []
         context = "\n".join(f"{h['role']}: {h['text']}" for h in history[-_HISTORY_TURNS:])
-        user = (f"שיחה קודמת:\n{context}\n\nהודעה חדשה מהבעלים:\n{message}" if context
-                else message)
+        user = (f"Earlier conversation:\n{context}\n\nNew message from Dor:\n{message}"
+                if context else message)
         try:
             reply = self.llm.run_tools(self.role_prompt, user, self.tools(),
                                        mock_text=self._mock_chat(message))
-        except LLMError as exc:
-            reply = f"מצטער, לא הצלחתי להגיע ל-Claude כרגע ({exc}). נסה שוב עוד רגע."
-        reply = reply or "לא קיבלתי תשובה מהמודל — נסה לנסח שוב."
+        except LLMError:
+            reply = "לא הצלחתי לחשוב על תשובה כרגע. ננסה שוב עוד רגע?"
+        reply = reply or "לא קיבלתי תשובה. תנסח לי שוב?"
         history = (history + [{"role": "owner", "text": message},
                               {"role": "manager", "text": reply}])[-2 * _HISTORY_TURNS:]
         self.db.kv_set(_HISTORY_KEY, history)
-        self.status("idle")
+        self.status("idle", quiet=True)
         return reply
 
     def _mock_chat(self, message: str) -> str:
-        """Deterministic offline answer built from real tool data."""
-        s = self._t_status()
-        b = CFO(self.ctx).budget_status()
+        """Deterministic offline answer in the manager's voice, built from real state.
+
+        Same style as the real one: Hebrew, at most 4 short sentences, no technical words,
+        at most one yes/no question. Covers the dashboard's quick replies.
+        """
+        from ..home import home_sentence, results_summary
+
         low = message.lower()
-        lines = ["[מצב הדגמה — ללא Claude] "]
-        if any(w in low for w in ("אשר", "approve", "תאשר")):
-            lines.append("אני לא יכול לאשר בעצמי — רק אתה. ")
-            pending = self.db.list_approvals("pending")
-            if pending:
-                lines.append(f"ממתין אישור #{pending[0].id}: {pending[0].title}. "
-                             f"אשר עם `agency approve {pending[0].id}` או בלוח הבקרה.")
+        pending = self.db.list_approvals("pending")
+        if any(w in low for w in ("אשר", "approve", "תאשר", "אישור")):
+            if not pending:
+                return "אני לא יכול לאשר בשבילך — רק אתה. כרגע אין שום דבר שמחכה לך."
+            return ("אני לא יכול לאשר בשבילך — רק אתה. "
+                    f"{self._pending_line(pending)} "
+                    "לחץ \"יאללה, תעלה\" על הכרטיס במסך הבית.")
+        if any(w in low for w in ("הוצא", "כסף", "תקציב", "budget", "spend")):
+            b = CFO(self.ctx).budget_status()
+            return (f"החודש הוצאנו {b['spent']:.0f} ₪ והכנסנו {b['income']:.0f} ₪. "
+                    + (f"נשארו {b['remaining']:.0f} ₪ בתקציב." if b["budget"] else
+                       "התקציב החודשי הוא 0 ₪, אז אני לא מוציא כלום."))
+        if re.search(r"מה עלה|עלה היום|עלו היום|מה יצא", message) or "uploaded" in low:
+            return self._uploaded_today()
+        if any(w in low for w in ("רעיון", "idea")):
+            return self._idea()
+        if _CHANGE_RE.search(message):
+            return self._change_hint(message, pending)
+        line = home_sentence(self.ctx)
+        week = results_summary(self.ctx, 7)
+        videos = len(self.db.list_videos(500))
+        parts = [line["sentence"]]
+        if videos:
+            parts.append(f"יש לנו {_count_videos(videos)} בסך הכל.")
+        else:
+            parts.append("עוד אין סרטונים אצלנו.")
+        if week["views"]:
+            parts.append(f"השבוע: {week['views']:,} צפיות.")
+        if line["training"] and "אימון" not in line["sentence"]:
+            parts.append("אנחנו במצב אימון, אז שום דבר לא יוצא החוצה בלי שתדליק.")
+        return " ".join(parts[:4])
+
+    def _change_hint(self, message: str, pending: list) -> str:
+        """"שנה משהו" offline: point to the card's own editor (titles / descriptions)."""
+        from ..home import video_title
+
+        cards = []
+        for a in pending:
+            vid = (a.payload or {}).get("video_id")
+            if a.kind == "publish" and vid is not None:
+                cards.append(video_title(self.db.get_video(int(vid))))
+        if not cards:
+            return ("כרגע אין קליפ שמחכה לך. כשיהיה, אפשר לתקן כותרת ותיאור בכרטיס שלו, "
+                    "ב\"פרטים לכל פלטפורמה\".")
+        title = next((t for t in cards if t and t in message), cards[0])
+        return (f"הכי מהיר שתתקן בעצמך: בכרטיס של \"{title}\" לחץ \"פרטים לכל פלטפורמה\", "
+                "תקן ושמור. זה נשמר עוד לפני שאתה מאשר.")
+
+    def _pending_line(self, pending: list) -> str:
+        titles = [self._approval_label(a) for a in pending[:2]]
+        if len(pending) == 1:
+            return f"מחכה לך: {titles[0]}."
+        return f"מחכים לך {len(pending)} דברים, למשל {titles[0]}."
+
+    def _approval_label(self, a) -> str:
+        from ..home import video_title
+
+        vid = (a.payload or {}).get("video_id")
+        if a.kind == "publish" and vid is not None:
+            return f"\"{video_title(self.db.get_video(int(vid)))}\""
+        if a.kind == "spend":
+            return f"בקשת הוצאה של {a.cost_ils:.0f} ₪"
+        return "בקשה קטנה"
+
+    def _uploaded_today(self) -> str:
+        from ..home import is_real_post, published_at, video_title
+
+        tz = local_tz(self.settings)
+        today = datetime.now(timezone.utc).astimezone(tz).date()
+        real: dict[int, list[str]] = {}
+        training: set[int] = set()
+        for p in self.db.list_posts():
+            when = published_at(p) if p["status"] == "published" else None
+            if not when or when.astimezone(tz).date() != today:
+                continue
+            if is_real_post(p):
+                real.setdefault(p["video_id"], []).append(_platform_he(p["platform"]))
             else:
-                lines.append("אין כרגע אישורים ממתינים.")
-            return "".join(lines)
-        lines.append(f"יש {s['videos_total']} סרטונים במערכת, {s['pending_approvals']} אישורים "
-                     f"ממתינים ו-{s['scheduled_posts']} פוסטים מתוזמנים. ")
-        lines.append(f"תקציב החודש: נוצלו {b['spent']:.0f} מתוך {b['budget']:.0f} ₪, הכנסות "
-                     f"{b['income']:.0f} ₪. ")
-        lines.append("מצב ניסיון פעיל — שום דבר לא עולה באמת." if s["dry_run"]
-                     else "מצב אמיתי — פוסטים מאושרים עולים לרשתות.")
-        return "".join(lines)
+                training.add(p["video_id"])
+        if real:
+            vid, platforms = next(iter(real.items()))
+            more = f" ועוד {_count_videos(len(real) - 1)}" if len(real) > 1 else ""
+            return (f"היום עלה \"{video_title(self.db.get_video(vid))}\" ל{', '.join(platforms)}"
+                    f"{more}. רוצה שאבדוק איך הוא מתקדם?")
+        if training:
+            n = len(training)
+            ready = "סרטון אחד מוכן" if n == 1 else f"{_count_videos(n)} מוכנים"
+            return ("היום לא יצא כלום החוצה — הכל היה במצב אימון. "
+                    f"{ready} באימון. רוצה להדליק העלאה אמיתית?")
+        waiting = [a for a in self.db.list_approvals("pending") if a.kind == "publish"]
+        if waiting:
+            return f"היום עוד לא יצא כלום. {self._approval_label(waiting[0])} מחכה לאישור שלך."
+        return "היום עוד לא יצא כלום. יש לך קליפ לזרוק?"
+
+    def _idea(self) -> str:
+        last = self.db.kv_get("analytics.last") or {}
+        best = last.get("best_clip_type")
+        clip = {"ace": "אייס", "clutch": "קלאץ'", "funny": "רגע מצחיק", "highlight": "הייליט",
+                "tutorial": "טיפ", "montage": "מונטאז'"}.get(str(best or ""), "קלאץ' 1v3")
+        why = "זה מה שעובד לך הכי טוב עכשיו." if best else "זה מה שהכי עובד ב-CS2 עכשיו."
+        return (f"רעיון: {clip} עם דיגל, ושוט AI מטורף על הכדור האחרון. {why} "
+                "שאכין לזה כותרות כשתזרוק את הקליפ?")
 
     # ------------------------------------------------------------------ brief
     def daily_brief(self) -> str:
-        """Short Hebrew daily brief for the owner."""
-        s = self._t_status()
-        b = CFO(self.ctx).budget_status()
+        """Short Hebrew daily brief for the owner: a greeting line + at most 5 bullets."""
+        from ..home import greeting, home_sentence, results_summary, video_title
+
         tz = local_tz(self.settings)
         now = datetime.now(timezone.utc)
+        line = home_sentence(self.ctx, now)
+        week = results_summary(self.ctx, 7, now)
+        b = CFO(self.ctx).budget_status()
+        bullets: list[str] = []
+        if line["counts"]["problems"]:
+            failed = [v for v in self.db.list_videos(50) if v.status == VideoStatus.FAILED]
+            name = f" ב\"{video_title(failed[0])}\"" if failed else ""
+            bullets.append(f"משהו נתקע{name} — אפשר לנסות שוב.")
+        pending = self.db.list_approvals("pending")
+        if pending:
+            bullets.append(self._pending_line(pending))
         due_soon = []
         for p in self.db.list_posts():
             when = parse_iso(p.get("scheduled_at"))
             if p["status"] == "scheduled" and when and now <= when <= now + timedelta(days=1):
-                due_soon.append((when, p["platform"]))
-        upcoming = [f"{plat} ב-{when.astimezone(tz):%H:%M}" for when, plat in sorted(due_soon)]
-        failed = [v for v in self.db.list_videos(50) if v.status == VideoStatus.FAILED]
+                due_soon.append((when, _platform_he(p["platform"])))
+        if due_soon:
+            when, name = min(due_soon)
+            more = f" ועוד {len(due_soon) - 1}" if len(due_soon) > 1 else ""
+            bullets.append(f"הבא בתור: {name} ב-{when.astimezone(tz):%H:%M}{more}.")
+        if week["views"] or week["likes"]:
+            bullets.append(f"השבוע: {week['views']:,} צפיות, {week['likes']:,} לייקים.")
+        if line["training"]:
+            bullets.append("מצב אימון: הכל נשאר אצלנו עד שתדליק העלאה אמיתית.")
+        bullets.append(f"החודש: הוצאות {b['spent']:.0f} ₪ · הכנסות {b['income']:.0f} ₪.")
         last = self.db.kv_get("analytics.last") or {}
-        facts = {"status": s, "budget": b, "upcoming_24h": upcoming,
-                 "failed_videos": [v.id for v in failed],
-                 "analytics": last.get("insight_he", "")}
-        lines = [f"סיכום יומי מהמנכ״ל ({now.astimezone(tz):%d/%m/%Y}):",
-                 f"- סרטונים: {s['videos_total']} | אישורים ממתינים: {s['pending_approvals']}"
-                 + (f" (כולל {s['pending_spend_ils']:.0f} ₪ בקשות הוצאה)"
-                    if s["pending_spend_ils"] else ""),
-                 f"- מתוזמנים ל-24 השעות הקרובות: {', '.join(upcoming) if upcoming else 'אין'}",
-                 f"- כספים: נוצלו {b['spent']:.0f}/{b['budget']:.0f} ₪, הכנסות {b['income']:.0f} ₪,"
-                 f" נטו {b['net']:.0f} ₪"]
-        if failed:
-            lines.append(f"- דורש טיפול: סרטונים שנכשלו {', '.join(f'#{v.id}' for v in failed)}")
-        if last.get("insight_he"):
-            lines.append(f"- תובנה: {last['insight_he']}")
-        lines.append("- מצב ניסיון פעיל: שום דבר לא עולה באמת." if s["dry_run"]
-                     else "- מצב אמיתי פעיל.")
+        if last.get("insight_he") and (last.get("posts_with_stats") or 0) > 0:
+            bullets.append(_plain_platforms(str(last["insight_he"])))
+        header = f"{greeting(self.settings, now)}! הנה מה שחשוב היום:"
+        fallback = limit_bullets("\n".join([header, *[f"- {x}" for x in bullets]]))
+        facts = {"home_line": line["text"], "bullets": bullets,
+                 "week": {k: week[k] for k in ("views", "likes", "comments")}}
         try:
             data = self.llm.complete_json(
-                self.role_prompt, "כתוב סיכום יומי קצר לבעלים על סמך הנתונים (בלי להמציא "
-                f"מספרים):\n{json.dumps(facts, ensure_ascii=False, default=str)}",
-                BRIEF_SCHEMA, mock_value={"brief_he": "\n".join(lines)})
-            return str(data.get("brief_he") or "\n".join(lines))
+                self.role_prompt, "Write Dor's daily brief in Hebrew: one short greeting line, "
+                "then at most 5 short bullets starting with '- '. Use ONLY these facts, no ids, "
+                "no technical words, at most one yes/no question:\n"
+                f"{json.dumps(facts, ensure_ascii=False, default=str)}",
+                BRIEF_SCHEMA, mock_value={"brief_he": fallback})
+            return limit_bullets(str(data.get("brief_he") or fallback))
         except LLMError:
-            return "\n".join(lines)
+            return fallback
+
+
+_BULLET_RE = re.compile(r"^\s*(?:[-•*]|\d+[.)])\s+")
+MAX_BRIEF_BULLETS = 5
+
+
+def limit_bullets(text: str, max_bullets: int = MAX_BRIEF_BULLETS) -> str:
+    """At most one header line plus ``max_bullets`` bullet lines (extra lines are dropped)."""
+    header: list[str] = []
+    bullets: list[str] = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if _BULLET_RE.match(line):
+            if len(bullets) < max_bullets:
+                bullets.append("- " + _BULLET_RE.sub("", line).strip())
+        elif not header and not bullets:
+            header.append(line)
+        elif len(bullets) < max_bullets:  # a prose line counts as a bullet
+            bullets.append(f"- {line}")
+    return "\n".join(header + bullets)
+
+
+def _platform_he(key: str) -> str:
+    from ._playbook import PLATFORM_HE
+    return PLATFORM_HE.get(key, key)
+
+
+def _plain_platforms(text: str) -> str:
+    """Replace internal platform keys ("youtube_shorts") with their Hebrew names."""
+    from ._playbook import PLATFORM_HE
+    for key in sorted(PLATFORM_HE, key=len, reverse=True):
+        text = re.sub(rf"(?<![A-Za-z_]){re.escape(key)}(?![A-Za-z_])", PLATFORM_HE[key], text)
+    return text
+
+
+def _count_videos(n: int) -> str:
+    if n == 1:
+        return "סרטון אחד"
+    words = {2: "שני", 3: "שלושה", 4: "ארבעה", 5: "חמישה", 6: "שישה", 7: "שבעה", 8: "שמונה",
+             9: "תשעה", 10: "עשרה"}
+    return f"{words.get(n, n)} סרטונים"

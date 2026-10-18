@@ -2,159 +2,332 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
-  <title>חדר הבקרה · סוכנות CS2</title>
-  <link rel="icon" href="data:,">
+  <meta name="theme-color" content="#0b0f14">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Imagination · הסוכנות</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23f5a623'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%231a1203' stroke-width='2.6'/%3E%3Ccircle cx='16' cy='16' r='1.8' fill='%231a1203'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body data-dry-run="{{ 'true' if dry_run else 'false' }}" data-max-gb="{{ max_upload_gb }}" data-ext="{{ extensions }}">
-  <div id="dryrun-banner" class="dryrun-banner{{ '' if dry_run else ' hidden' }}" role="status">
-    <strong>מצב ניסיון (DRY-RUN) פעיל</strong>
-    <span>שום דבר לא עולה באמת לרשתות — הצוות רק מראה מה היה עושה. לשינוי: <code>dry_run: false</code> בקובץ config.yaml.</span>
-  </div>
+<body data-max-gb="{{ max_upload_gb }}" data-ext="{{ extensions }}" data-channel="{{ channel }}">
+  <a class="skip" href="#main">דלג לתוכן</a>
 
   <header class="topbar">
-    <div class="brand">
-      <div class="logo" aria-hidden="true">CS2</div>
-      <div>
-        <h1>חדר הבקרה</h1>
-        <div class="sub">סוכנות השיווק{% if channel %} של <span id="channel-name">{{ channel }}</span>{% endif %}</div>
-      </div>
+    <div class="topbar-inner">
+      <a class="brand" href="#/" aria-label="Imagination — למסך הבית">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 42 42" focusable="false">
+            <defs>
+              <linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#ffcc66"/>
+                <stop offset="1" stop-color="#f08c00"/>
+              </linearGradient>
+            </defs>
+            <rect width="42" height="42" rx="13" fill="url(#brand-g)"/>
+            <circle cx="21" cy="21" r="9.5" fill="none" stroke="#1a1203" stroke-width="3"/>
+            <path d="M21 6.5v7M21 28.5v7M6.5 21h7M28.5 21h7" stroke="#1a1203" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="21" cy="21" r="2.4" fill="#1a1203"/>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name" id="brand-name">{{ channel or "Imagination" }}</span>
+          <span class="brand-sub" id="brand-sub">הסוכנות שלך</span>
+        </span>
+      </a>
+      <nav class="top-actions" aria-label="ניווט">
+        <a id="mode-pill" class="pill pill-training hidden" href="#/connections"><span class="pdot" aria-hidden="true"></span><span id="mode-text">מצב אימון</span></a>
+        <a id="nav-advanced" class="icon-btn hidden" href="#/advanced" aria-label="מצב מתקדם" title="מצב מתקדם" data-icon="terminal"></a>
+        <a id="nav-connections" class="icon-btn" href="#/connections" aria-label="חיבורים" title="חיבורים" data-icon="plug"></a>
+        <a id="nav-settings" class="icon-btn" href="#/settings" aria-label="הגדרות" title="הגדרות" data-icon="gear"></a>
+      </nav>
     </div>
-    <div class="chips">
-      <span id="chip-mode" class="chip">מצב פרסום: …</span>
-      <span id="chip-llm" class="chip">מוח: …</span>
-      <span id="chip-conn" class="chip chip-ok">מחובר</span>
-    </div>
-    <nav class="quicknav" aria-label="ניווט מהיר">
-      <a href="#org">צוות</a>
-      <a href="#approvals">אישורים <span id="nav-pending" class="badge hidden">0</span></a>
-      <a href="#upload">העלאה</a>
-      <a href="#videos">סרטונים</a>
-      <a href="#finance">כספים</a>
-      <a href="#chat">צ'אט</a>
-    </nav>
   </header>
+  <div id="offline" class="offline hidden" role="status">אין חיבור לסוכנות במחשב. מנסה שוב…</div>
 
-  <main class="layout">
-    <!-- Org chart -->
-    <section id="org" class="card span-all">
-      <div class="card-head"><h2>הצוות</h2><span class="muted" id="org-updated"></span></div>
-      <div class="org">
-        <div id="org-manager" class="org-manager"></div>
-        <div class="org-line" aria-hidden="true"></div>
-        <div id="org-staff" class="org-staff"></div>
-      </div>
-    </section>
+  <main id="main" tabindex="-1">
+    <!-- ============================================================ HOME -->
+    <section id="page-home" class="page" aria-labelledby="home-h">
+      <h1 id="home-h" class="visually-hidden">מסך הבית</h1>
+      <div id="home-banners"></div>
 
-    <!-- Approvals -->
-    <section id="approvals" class="card span-all">
-      <div class="card-head">
-        <h2>ממתין לאישור שלך</h2>
-        <span class="muted">כסף לא זז ושום דבר לא עולה בלי אישור שלך</span>
-      </div>
-      <div id="approvals-list" class="approvals"></div>
-      <p id="approvals-empty" class="empty hidden">אין כרגע אישורים שמחכים לך.</p>
-    </section>
-
-    <!-- Upload -->
-    <section id="upload" class="card">
-      <div class="card-head"><h2>סרטון חדש</h2></div>
-      <form id="upload-form" class="stack" novalidate>
-        <label id="dropzone" class="dropzone" for="file-input" tabindex="0">
-          <input id="file-input" name="file" type="file" accept=".mp4,.mov,.mkv,.webm,.avi,video/*" class="visually-hidden">
-          <span class="drop-icon" aria-hidden="true">⬆</span>
-          <span class="drop-title">גרור לכאן סרטון או לחץ לבחירה</span>
-          <span class="muted" id="drop-hint">MP4 / MOV / MKV / WEBM / AVI · עד {{ max_upload_gb }}GB</span>
-          <span id="file-name" class="file-name"></span>
-        </label>
-        <label class="field">
-          <span>על מה הקליפ? (לא חובה)</span>
-          <input id="upload-title" type="text" maxlength="200" placeholder="למשל: אייס עם AWP במיראז'">
-        </label>
-        <div id="upload-progress" class="progress hidden" aria-hidden="true"><div class="progress-fill"></div></div>
-        <div id="upload-status" class="form-status" role="status"></div>
-        <button id="upload-btn" type="submit" class="btn btn-primary btn-big" disabled>שלח לצוות</button>
-      </form>
-    </section>
-
-    <!-- Finance -->
-    <section id="finance" class="card">
-      <div class="card-head"><h2>כספים</h2><span class="muted" id="fin-month"></span></div>
-      <div class="budget">
-        <div class="budget-row"><span>נוצל מהתקציב</span><strong id="fin-used">-</strong></div>
-        <div class="progress" id="fin-bar-wrap"><div id="fin-bar" class="progress-fill"></div></div>
-        <div class="stats">
-          <div class="stat"><span class="muted">תקציב</span><strong id="fin-budget">-</strong></div>
-          <div class="stat"><span class="muted">הוצאות</span><strong id="fin-spent">-</strong></div>
-          <div class="stat"><span class="muted">הכנסות</span><strong id="fin-income">-</strong></div>
-          <div class="stat"><span class="muted">נטו</span><strong id="fin-net">-</strong></div>
+      <div class="hero">
+        <div id="mgr-avatar" class="mgr-avatar mood-calm" aria-hidden="true" data-icon="crown"><span class="mood-dot"></span></div>
+        <div class="hero-text">
+          <p id="mgr-greeting" class="greeting"><span class="skel skel-line w30"></span></p>
+          <p id="mgr-sentence" class="sentence" aria-live="polite"><span class="skel skel-title w80"></span></p>
         </div>
-        <p class="muted small" id="fin-cap"></p>
       </div>
-      <div class="tabs" role="tablist">
-        <button type="button" class="tab active" data-tab="expense" role="tab">הוספת הוצאה</button>
-        <button type="button" class="tab" data-tab="income" role="tab">הוספת הכנסה</button>
+
+      <div class="home-grid">
+        <div class="col-main">
+          <section class="card drop-card" aria-label="קליפ חדש">
+            <div id="drop-idle">
+              <label id="dropzone" class="dropzone" for="file-input" tabindex="0" aria-describedby="drop-hint">
+                <input id="file-input" class="file-input" type="file" accept="video/*,.mp4,.mov,.mkv,.webm,.avi">
+                <span class="drop-icon" aria-hidden="true" data-icon="upload"></span>
+                <span class="drop-title">זרוק קליפ</span>
+                <span id="drop-hint" class="drop-hint">או לחץ כדי לבחור · הצוות כבר יעשה את השאר</span>
+              </label>
+            </div>
+            <div id="drop-chosen" class="chosen hidden">
+              <div id="chosen-preview" class="chosen-preview" data-icon="film"></div>
+              <div class="stack">
+                <div>
+                  <div id="chosen-name" class="chosen-name ltr"></div>
+                  <div id="chosen-meta" class="chosen-meta"></div>
+                </div>
+                <label class="field">
+                  <span>מה קרה בקליפ? <span class="muted">(לא חובה)</span></span>
+                  <input id="clip-title" class="input" type="text" maxlength="200" autocomplete="off" placeholder="למשל: אייס עם דיגל במיראז'">
+                </label>
+                <div id="chosen-msg" class="form-msg" role="status"></div>
+                <div class="chosen-actions">
+                  <button id="send-clip" type="button" class="btn btn-primary btn-big">שלח לצוות</button>
+                  <button id="cancel-clip" type="button" class="btn btn-ghost btn-big">ביטול</button>
+                </div>
+              </div>
+            </div>
+            <div id="drop-uploading" class="uploading hidden" role="status" aria-live="polite">
+              <div class="uploading-head">
+                <span class="spin" aria-hidden="true"></span>
+                <strong id="upload-label">מעלה את הקליפ…</strong>
+                <span id="upload-pct" class="uploading-pct">0%</span>
+              </div>
+              <div class="progress" aria-hidden="true"><i id="upload-bar"></i></div>
+              <div class="row"><span id="upload-size" class="muted small"></span><span class="spacer"></span><button id="upload-cancel" type="button" class="btn btn-ghost btn-sm">ביטול</button></div>
+            </div>
+            <div id="timelines"></div>
+          </section>
+
+          <section id="problems" class="card problem-card hidden" aria-labelledby="problems-h">
+            <h2 id="problems-h" class="sec-title"><span data-icon="alert"></span>משהו נתקע</h2>
+            <div id="problems-list"></div>
+          </section>
+
+          <section id="needs" class="hidden" aria-labelledby="needs-h">
+            <h2 id="needs-h" class="sec-title">מחכה לך <span id="needs-count" class="count"></span></h2>
+            <div id="notify-ask"></div>
+            <div id="needs-list" class="needs-list"></div>
+          </section>
+
+          <section id="prev-clips" class="card hidden" aria-labelledby="prev-h">
+            <h2 id="prev-h" class="sec-title"><span data-icon="folder"></span>קליפים קודמים</h2>
+            <p class="sec-sub">היו בתיקייה לפני שהדלקת אותה. רוצה שהצוות יכין אחד מהם?</p>
+            <div id="prev-list" class="clip-list"></div>
+          </section>
+        </div>
+
+        <aside class="col-side" aria-label="סיכום">
+          <section class="card" aria-labelledby="results-h">
+            <h2 id="results-h" class="sec-title"><span data-icon="chart"></span>איך הולך <span class="muted small">· 7 ימים</span></h2>
+            <div id="results">
+              <div class="stats3">
+                <div class="stat"><span class="skel skel-title w60"></span><span class="skel skel-line w50"></span></div>
+                <div class="stat"><span class="skel skel-title w60"></span><span class="skel skel-line w50"></span></div>
+                <div class="stat"><span class="skel skel-title w60"></span><span class="skel skel-line w50"></span></div>
+              </div>
+            </div>
+          </section>
+
+          <button id="money-line" type="button" class="card money-line" aria-haspopup="dialog">
+            <span class="money-top">
+              <span class="money-ic" aria-hidden="true" data-icon="wallet"></span>
+              <span class="money-text"><span id="money-sentence"><span class="skel skel-line w80"></span></span><span id="money-sub" class="money-sub" hidden></span></span>
+              <span class="chev" aria-hidden="true" data-icon="chevron"></span>
+            </span>
+            <span id="money-bar" class="money-bar" hidden><i></i></span>
+          </button>
+
+          <section class="card" aria-labelledby="team-h">
+            <h2 id="team-h" class="sec-title"><span data-icon="users"></span>הצוות</h2>
+            <div id="team" class="team-row">
+              <span class="skel skel-circle skel-mate"></span><span class="skel skel-circle skel-mate"></span><span class="skel skel-circle skel-mate"></span>
+            </div>
+            <p id="team-note" class="team-note"></p>
+          </section>
+        </aside>
       </div>
-      <form id="money-form" class="money-form" novalidate>
-        <input id="money-amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="סכום ₪" required>
-        <input id="money-cat" type="text" maxlength="100" placeholder="קטגוריה (ads, software...)">
-        <input id="money-desc" type="text" maxlength="500" placeholder="תיאור">
-        <button type="submit" class="btn btn-blue" id="money-btn">הוסף הוצאה</button>
+    </section>
+
+    <!-- ============================================================ CONNECTIONS -->
+    <section id="page-connections" class="page hidden" aria-labelledby="conn-h">
+      <div class="page-head">
+        <div class="page-title">
+          <a class="back" href="#/" aria-label="חזרה למסך הבית" data-icon="arrow"></a>
+          <div>
+            <h1 id="conn-h">חיבורים</h1>
+            <p class="lead">מחברים פעם אחת — ומאז הצוות מעלה בשבילך.</p>
+          </div>
+        </div>
+        <button id="import-open" type="button" class="btn btn-steel"><span data-icon="download"></span>ייבוא חיבורים קיימים</button>
+      </div>
+      <div id="conn-top"></div>
+      <div id="conn-summary" class="conn-summary"></div>
+      <div id="conn-grid" class="tiles" aria-live="polite"></div>
+      <p class="muted small" id="conn-foot"></p>
+    </section>
+
+    <!-- ============================================================ SETTINGS -->
+    <section id="page-settings" class="page hidden" aria-labelledby="set-h">
+      <div class="page-head">
+        <div class="page-title">
+          <a class="back" href="#/" aria-label="חזרה למסך הבית" data-icon="arrow"></a>
+          <div>
+            <h1 id="set-h">הגדרות</h1>
+            <p class="lead">רק מה שחשוב. כל השאר הצוות מסדר.</p>
+          </div>
+        </div>
+      </div>
+      <div id="set-local-note"></div>
+      <form id="settings-form" class="settings-grid" novalidate autocomplete="off">
+        <section class="card set-card" aria-labelledby="s-channel-h">
+          <h2 id="s-channel-h"><span data-icon="film"></span>הערוץ</h2>
+          <div class="fields-2">
+            <label class="field"><span>שם הערוץ</span><input class="input" name="channel.name" maxlength="120"></label>
+            <label class="field"><span>הכינוי</span><input class="input ltr" name="channel.handle" maxlength="80" placeholder="@imaginationcs2"></label>
+          </div>
+          <details class="advanced-box set-sub">
+            <summary><span data-icon="sparkles"></span>המותג (האשטגים, מילים חסומות, סגנון)<span data-icon="chevron-down"></span></summary>
+            <div class="inner">
+              <label class="field"><span>שורת הביו</span><input class="input" name="brand.bio" maxlength="300" dir="auto"></label>
+              <label class="field"><span>האשטגים קבועים</span><input class="input ltr" name="brand.hashtags" maxlength="300" placeholder="#CS2 #CounterStrike2 #CS2Edit"><small>עם רווח ביניהם. הם נוספים לכל פוסט.</small></label>
+              <label class="field"><span>מילים שאסור לפרסם</span><textarea class="textarea" name="brand.blocked_words" rows="4" dir="auto"></textarea><small>מילה בכל שורה. כותרת עם מילה כזאת לא תעלה.</small></label>
+              <label class="field"><span>סגנון הכתיבה</span><textarea class="textarea" name="brand.style_notes" rows="5" dir="auto"></textarea></label>
+              <label class="field"><span>שורת הסימון לקטעים שנעשו עם AI</span><input class="input" name="brand.ai_label" maxlength="200" dir="auto"></label>
+              <button type="button" class="switch" data-name="brand.music_credit" role="switch" aria-checked="false">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span class="switch-text"><b>קרדיט למוזיקה</b><small>מוסיפים את שם השיר כשהוא ידוע</small></span>
+              </button>
+            </div>
+          </details>
+        </section>
+
+        <section class="card set-card" aria-labelledby="s-post-h">
+          <h2 id="s-post-h"><span data-icon="rocket"></span>העלאות</h2>
+          <div class="radio-cards" role="radiogroup" aria-label="איך מעלים">
+            <label class="radio-card"><input type="radio" name="publishing.mode" value="approve"><span class="rc-dot" aria-hidden="true"></span><b>אני מאשר כל העלאה</b><small>הצוות מכין, אתה לוחץ "יאללה".</small></label>
+            <label class="radio-card"><input type="radio" name="publishing.mode" value="auto"><span class="rc-dot" aria-hidden="true"></span><b>תעלה לבד</b><small>הצוות מתזמן בלי לשאול. כסף תמיד באישור שלך.</small></label>
+          </div>
+          <div class="set-sub">
+            <button type="button" class="switch" data-name="publishing.quiet_hours.enabled" role="switch" aria-checked="false">
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text"><b>שעות בלי העלאות</b><small>למשל בלילה או בזמן לימודים</small></span>
+            </button>
+            <div id="quiet-times" class="fields-2">
+              <label class="field"><span>מ-</span><input class="input ltr" type="time" name="publishing.quiet_hours.start"></label>
+              <label class="field"><span>עד</span><input class="input ltr" type="time" name="publishing.quiet_hours.end"></label>
+            </div>
+          </div>
+        </section>
+
+        <section class="card set-card" aria-labelledby="s-money-h">
+          <h2 id="s-money-h"><span data-icon="wallet"></span>כסף</h2>
+          <p class="sec-sub">שקל לא זז בלי שאתה מאשר. מעל התקרה — נחסם גם אם אישרת.</p>
+          <div class="fields-2">
+            <label class="field"><span>תקציב חודשי (₪)</span><input class="input ltr" type="number" inputmode="decimal" min="0" step="1" name="finance.monthly_budget_ils"></label>
+            <label class="field"><span>הכי הרבה להוצאה אחת (₪)</span><input class="input ltr" type="number" inputmode="decimal" min="0" step="1" name="finance.max_single_spend_ils"></label>
+          </div>
+        </section>
+
+        <section class="card set-card" aria-labelledby="s-inbox-h">
+          <h2 id="s-inbox-h"><span data-icon="folder"></span>תיקיית קליפים</h2>
+          <p class="sec-sub">ממשיך את ההרגל שלך: מה שנכנס לתיקייה מגיע לצוות לבד.</p>
+          <button type="button" class="switch live-set" data-name="inbox.enabled" role="switch" aria-checked="false">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text"><b>לקחת קליפים מהתיקייה</b><small id="inbox-folder-now" class="path-line"></small></span>
+          </button>
+          <div class="set-sub" id="inbox-folder-edit">
+            <label class="field"><span>תיקייה אחרת <span class="muted">(לא חובה)</span></span>
+              <span class="row nowrap"><input id="inbox-folder" class="input ltr" maxlength="400" placeholder="C:\Users\...\Desktop\CS2_CLIPS"><button id="inbox-folder-save" type="button" class="btn btn-sm btn-ghost">שמור</button></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="card set-card" aria-labelledby="s-tg-h">
+          <h2 id="s-tg-h"><span data-icon="send"></span>אישורים בטלגרם</h2>
+          <button type="button" class="switch live-set" data-name="notify.telegram.enabled" role="switch" aria-checked="false">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text"><b>לשלוח לי לטלגרם</b><small>כל קליפ מוכן מגיע עם כפתור "אשר הכל"</small></span>
+          </button>
+          <div class="set-sub row">
+            <span id="tg-status" class="status-line"><span class="sd"></span><span>…</span></span>
+            <span class="spacer"></span>
+            <a class="btn btn-sm btn-ghost" href="#/connections/telegram">לחיבור הבוט</a>
+          </div>
+        </section>
+
+        <section class="card set-card" aria-labelledby="s-phone-h">
+          <h2 id="s-phone-h"><span data-icon="phone"></span>גישה מהטלפון</h2>
+          <p class="sec-sub">לאשר מהספה. עובד רק ברשת ה-Wi-Fi של הבית.</p>
+          <button type="button" class="switch live-set" data-name="dashboard.remote_access" role="switch" aria-checked="false">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text"><b>גישה מהטלפון</b><small id="phone-sub">כבוי</small></span>
+          </button>
+          <div id="phone-panel"></div>
+        </section>
+
+        <section class="card set-card" aria-labelledby="s-adv-h">
+          <h2 id="s-adv-h"><span data-icon="terminal"></span>מצב מתקדם</h2>
+          <button id="advanced-toggle" type="button" class="switch orange" role="switch" aria-checked="false">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text"><b>להראות פרטים טכניים</b><small>יומן פעילות, טבלאות, תנועות כסף ומצב החיבורים</small></span>
+          </button>
+          <div class="set-sub hidden" id="advanced-link"><a class="btn btn-steel" href="#/advanced"><span data-icon="terminal"></span>לדף המתקדם</a></div>
+        </section>
       </form>
-      <div id="money-status" class="form-status" role="status"></div>
-      <details class="ledger">
-        <summary>תנועות החודש</summary>
-        <ul id="ledger-list" class="ledger-list"></ul>
-      </details>
-    </section>
-
-    <!-- Videos & posts -->
-    <section id="videos" class="card span-all">
-      <div class="card-head"><h2>סרטונים ופוסטים</h2></div>
-      <div class="table-wrap">
-        <table class="table">
-          <thead><tr><th>#</th><th>סרטון</th><th>מצב</th><th>פוסטים</th><th>נוצר</th></tr></thead>
-          <tbody id="videos-body"></tbody>
-        </table>
+      <div id="save-bar" class="save-bar" aria-hidden="true">
+        <div class="save-bar-inner" role="region" aria-label="שמירת הגדרות">
+          <span id="save-bar-text">יש שינויים שלא נשמרו</span>
+          <button id="save-cancel" type="button" class="btn btn-sm btn-ghost">בטל</button>
+          <button id="save-go" type="button" class="btn btn-sm btn-primary">שמור</button>
+        </div>
       </div>
-      <p id="videos-empty" class="empty hidden">עוד אין סרטונים. גרור סרטון לתיבת ההעלאה.</p>
-      <h3 class="subhead">פוסטים</h3>
-      <div class="table-wrap">
-        <table class="table">
-          <thead><tr><th>#</th><th>פלטפורמה</th><th>כותרת</th><th>מצב</th><th>מתי</th><th>קישור</th></tr></thead>
-          <tbody id="posts-body"></tbody>
-        </table>
+    </section>
+
+    <!-- ============================================================ ADVANCED -->
+    <section id="page-advanced" class="page hidden" aria-labelledby="adv-h">
+      <div class="page-head">
+        <div class="page-title">
+          <a class="back" href="#/settings" aria-label="חזרה להגדרות" data-icon="arrow"></a>
+          <div>
+            <h1 id="adv-h">מצב מתקדם</h1>
+            <p class="lead">כל הפרטים הטכניים, במקום אחד.</p>
+          </div>
+        </div>
       </div>
-      <p id="posts-empty" class="empty hidden">עוד אין פוסטים.</p>
-    </section>
-
-    <!-- Chat -->
-    <section id="chat" class="card">
-      <div class="card-head"><h2>שיחה עם המנכ"ל</h2><span class="muted small" id="chat-mode"></span></div>
-      <div id="chat-log" class="chat-log" aria-live="polite"></div>
-      <form id="chat-form" class="chat-form">
-        <input id="chat-input" type="text" maxlength="4000" placeholder="שאל את המנכ&quot;ל משהו… למשל: מה מצב הסרטון האחרון?" autocomplete="off">
-        <button type="submit" class="btn btn-primary" id="chat-btn">שלח</button>
-      </form>
-    </section>
-
-    <!-- Activity feed -->
-    <section id="feed" class="card">
-      <div class="card-head"><h2>פעילות</h2></div>
-      <ul id="events-list" class="feed"></ul>
-    </section>
-
-    <!-- Platforms -->
-    <section id="platforms" class="card span-all">
-      <div class="card-head"><h2>פלטפורמות</h2><span class="muted small">מפתחות API נשמרים רק בקובץ .env</span></div>
-      <div id="platforms-list" class="platforms"></div>
+      <div id="adv-body" class="adv-grid"></div>
     </section>
   </main>
 
-  <footer class="footer muted small">סוכנות CS2 · רץ מקומית על המחשב שלך · בלי בוטים, בלי קניית צפיות</footer>
-  <div id="toast" class="toast hidden" role="alert"></div>
+  <footer class="foot">Imagination · רץ על המחשב שלך · בלי בוטים, בלי קניית צפיות</footer>
+
+  <button id="chat-fab" type="button" class="chat-fab" aria-controls="chat-panel" aria-expanded="false">
+    <span class="fab-ic" aria-hidden="true" data-icon="chat"></span><span>דבר עם המנכ"ל</span>
+  </button>
+  <section id="chat-panel" class="chat-panel" role="dialog" aria-modal="false" aria-labelledby="chat-h" aria-hidden="true">
+    <div class="chat-head">
+      <span class="mate boss" aria-hidden="true" data-icon="crown"></span>
+      <div class="ttl"><b id="chat-h">המנכ"ל</b><small>מכיר כל קליפ, כל מספר וכל שקל</small></div>
+      <button id="chat-close" type="button" class="modal-close" aria-label="סגור את השיחה" data-icon="x"></button>
+    </div>
+    <div id="chat-log" class="chat-log" aria-live="polite"></div>
+    <div class="quick" id="chat-quick" role="group" aria-label="שאלות מהירות">
+      <button type="button">מה המצב?</button>
+      <button type="button">מה עלה היום?</button>
+      <button type="button">תן לי רעיון לקליפ הבא</button>
+      <button type="button">כמה הוצאנו החודש?</button>
+    </div>
+    <form id="chat-form" class="chat-form" autocomplete="off">
+      <label for="chat-input" class="visually-hidden">הודעה למנכ"ל</label>
+      <input id="chat-input" class="input" type="text" maxlength="4000" placeholder="כתוב למנכ&quot;ל…" dir="auto" enterkeyhint="send">
+      <button id="chat-send" type="submit" class="send-btn" aria-label="שלח" data-icon="send"></button>
+    </form>
+  </section>
+
+  <div id="drag-overlay" class="drag-overlay hidden" aria-hidden="true"><div class="drag-overlay-box"><span data-icon="upload"></span>שחרר כאן — הצוות על זה</div></div>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
   <script src="/static/app.js"></script>
 </body>
 </html>

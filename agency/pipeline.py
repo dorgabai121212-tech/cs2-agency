@@ -5,6 +5,8 @@ the activity feed; a failing step marks the video FAILED with the error and neve
 """
 from __future__ import annotations
 
+import os
+import threading
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -22,6 +24,17 @@ from .staff.publisher import Publisher
 from .staff.strategist import Strategist
 
 ACTOR = "pipeline"
+
+# Videos whose pipeline runs in THIS process right now (the dashboard's recovery uses it to
+# tell a live job from one that died with an earlier process).
+_running_lock = threading.Lock()
+_running: set[int] = set()
+
+
+def running_videos() -> set[int]:
+    """Ids of videos whose pipeline is running in this process."""
+    with _running_lock:
+        return set(_running)
 
 
 class StepFailed(RuntimeError):
@@ -48,11 +61,27 @@ def publishing_mode(ctx: Context) -> str:
 
 
 def run_pipeline(ctx: Context, video_id: int) -> dict:
-    """Process one video end-to-end. Returns a summary dict; never raises for step failures."""
+    """Process one video end-to-end. Returns a summary dict; never raises for step failures.
+
+    The video's ``meta.job_pid`` records which process runs it (recovery after a restart)."""
     db = ctx.db
     video = db.get_video(video_id)
     if video is None:
         return {"ok": False, "video_id": video_id, "error": f"video {video_id} not found"}
+    with _running_lock:
+        _running.add(video_id)
+    try:
+        db.update_video(video_id, meta={"job_pid": os.getpid(),
+                                        "job_started": datetime.now(timezone.utc).isoformat(
+                                            timespec="seconds")})
+        return _run_pipeline(ctx, video_id, video)
+    finally:
+        with _running_lock:
+            _running.discard(video_id)
+
+
+def _run_pipeline(ctx: Context, video_id: int, video) -> dict:
+    db = ctx.db
     out: dict[str, Any] = {"ok": False, "video_id": video_id, "mode": publishing_mode(ctx),
                            "dry_run": ctx.settings.dry_run, "post_ids": [],
                            "approval_id": None, "promotion_approval_ids": []}
@@ -204,6 +233,7 @@ def _execute_publish(ctx: Context, approval: Approval, publish_now: bool | None)
         post = ctx.db.get_post(int(pid))
         if post is None or post["status"] in ("published", "cancelled", "publishing"):
             continue
+        _mark_owner_approved(ctx, post)
         when = parse_iso(post.get("scheduled_at"))
         if not now_flag and when is not None and when > now:
             ctx.db.update_post(post["id"], status="scheduled")
@@ -221,6 +251,37 @@ def _execute_publish(ctx: Context, approval: Approval, publish_now: bool | None)
         out["error"] = "; ".join(f"{r.get('platform')}: {r.get('error')}"
                                  for r in results if not r.get("ok"))
     return out
+
+
+def _mark_owner_approved(ctx: Context, post: dict) -> None:
+    """Persist ``plan.extra.owner_approved`` on a post the owner approved himself (TikTok's
+    consent flags depend on it, never on the current publishing mode)."""
+    plan = PostPlan.from_dict(post.get("plan") or {})
+    if (plan.extra or {}).get("owner_approved") is True:
+        return
+    plan.extra = {**(plan.extra or {}), "owner_approved": True}
+    plan.scheduled_at = post.get("scheduled_at")  # keep the post's own slot as it is
+    ctx.db.update_post(post["id"], plan=plan)
+
+
+def retry_video(ctx: Context, video_id: int) -> dict:
+    """"נסה שוב" for a video whose preparation failed (analyst … strategist): run the whole
+    pipeline again. Only a FAILED video with a failed step and no live posts qualifies.
+    Returns the pipeline summary (or ``{"ok": False, "error"}``)."""
+    video = ctx.db.get_video(video_id)
+    if video is None:
+        return {"ok": False, "video_id": video_id, "error": "video not found"}
+    if video.status != VideoStatus.FAILED or not (video.meta or {}).get("failed_step"):
+        return {"ok": False, "video_id": video_id, "error": "only a failed preparation can be "
+                "retried"}
+    if any(p["status"] != "cancelled" for p in ctx.db.list_posts(video_id)):
+        return {"ok": False, "video_id": video_id, "error": "this video already has posts"}
+    if video_id in running_videos():
+        return {"ok": False, "video_id": video_id, "error": "already running"}
+    ctx.db.update_video(video_id, status=VideoStatus.NEW,
+                        meta={"failed_step": None, "error": None, "retried": True})
+    emit(ctx.db, ACTOR, "מנסה שוב להכין את הקליפ", video_id=video_id)
+    return run_pipeline(ctx, video_id)
 
 
 def _execute_crosspost(ctx: Context, approval: Approval) -> dict:

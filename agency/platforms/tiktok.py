@@ -1,10 +1,15 @@
-"""TikTok via the Content Posting API v2 (Direct Post, FILE_UPLOAD).
+"""TikTok.
 
-Flow: creator_info/query -> video/init (FILE_UPLOAD) -> PUT chunks to upload_url with
+Publishing goes through **Zernio** by default (``publishing.platforms.tiktok.via: zernio``;
+the registry then builds ``zernio.ZernioAdapter`` — the owner's TikTok is connected there).
+This module is the *direct* TikTok Content Posting API v2 path (``via: direct``, Direct Post,
+FILE_UPLOAD):
+
+creator_info/query -> video/init (FILE_UPLOAD) -> PUT chunks to upload_url with
 Content-Range -> poll status/fetch.
 
 NOTE: apps that have not passed TikTok's audit can only post with privacy_level SELF_ONLY
-(visible only to the account owner). The adapter defaults to SELF_ONLY and falls back to it
+(visible only to the account owner). The direct path defaults to SELF_ONLY and falls back to it
 whenever the requested level is not offered by creator_info. After the audit set
 ``publishing.platforms.tiktok.privacy_level: PUBLIC_TO_EVERYONE`` in config.yaml.
 TikTok's API has no scheduled publishing; timing is handled by the agency scheduler.

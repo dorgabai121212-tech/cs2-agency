@@ -365,7 +365,10 @@ def store_secret(name: str, value: str, root: Path | None = None) -> str:
 def delete_secret(name: str, root: Path | None = None) -> list[str]:
     """Remove OUR copy of a secret (keyring ``cs2-agency`` + ``.env`` + this process).
 
-    The studio's ``cs2studio`` entries are never touched. Returns where it was removed from.
+    The studio's ``cs2studio`` entries are never touched. Returns where it was removed from
+    (``keyring`` / ``env``). A value that comes from the computer's own environment (it is in
+    ``os.environ`` but not in our ``.env``) is not ours to remove: it is left alone and
+    reported as ``system_env`` (it would come back at the next start anyway).
     """
     from . import settings_store
 
@@ -380,8 +383,10 @@ def delete_secret(name: str, root: Path | None = None) -> list[str]:
                 removed.append("keyring")
         except Exception:
             pass
-    if os.environ.get(name) or settings_store.env_file_has(root, name):
+    if settings_store.env_file_has(root, name):
         settings_store.env_unset(root, [name])
         removed.append("env")
+    elif os.environ.get(name):
+        removed.append("system_env")
     clear_secret_cache()
     return removed

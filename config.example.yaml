@@ -12,6 +12,36 @@ channel:
   niche: "Counter-Strike 2"    # הנישה של הערוץ
   handle: ""                   # שם המשתמש (@) שלך ברשתות
 
+# המותג שלך. הצוות כותב לפי זה, והקוד אוכף: מילים חסומות נמחקות, ההאשטגים של המותג תמיד יוצאים.
+# הטקסטים לפלטפורמות נכתבים באנגלית (קהל CS2 בינלאומי), כמו בסטודיו הקיים.
+brand:
+  name: "Imagination"
+  handle: "@imaginationcs2"
+  bio: "Legendary CS2 moments. Real demo. Shot like a movie."
+  hashtags: ["#CS2", "#CounterStrike2", "#CS2Edit"]   # תמיד ראשונים (ביוטיוב בדיוק אלה)
+  # מילים שאסור שיופיעו אף פעם (הימורי סקינים, אתרי פתיחת קופסאות, צ'יטים, מעורבות מזויפת)
+  blocked_words: ["skin gambling", "skins gambling", "gambling", "betting", "case opening",
+                  "case battle", "case battles", "free skins", "skin giveaway", "giveaway",
+                  "promo code", "referral code", "gamdom", "csgoroll", "hellcase", "key-drop",
+                  "keydrop", "csgoempire", "clash.gg", "skinclub", "farmskins", "datdrop",
+                  "csgo500", "duelbits", "rollbit", "stake.com", "bc.game", "csgonet",
+                  "cheat", "hack", "aimbot", "wallhack", "triggerbot", "spinbot", "injector",
+                  "sub4sub", "sub for sub", "follow for follow", "buy views", "buy likes",
+                  "buy followers", "free followers", "צ'יט", "צ'יטים", "צ׳יט", "צ׳יטים",
+                  "האק", "האקים", "הימורים", "הימורי סקינים", "פתיחת קופסאות",
+                  "פתיחת קייסים", "סקינים בחינם"]
+  # הטעם שלך (באנגלית, כי הצוות כותב באנגלית)
+  style_notes: |
+    Funny, trolling captions with confident banter - never dry, never corporate.
+    Hook within the first second: the first line names the moment (weapon, map, 1vX).
+    When a real viewer comment is available, open with it (quote it) and answer it.
+    The vibe is "pro + crazy AI": real skill plus an impossible cinematic shot.
+    Never self-mocking fail gags - we never laugh at our own mistakes.
+    Sell the player and the moment, never the technique.
+  # קליפ עם שוטים של AI מקבל את השורה הזו (true = בכל קליפ, false = בלי שורה)
+  ai_label: "A short part was restyled with AI. The rest is the real demo."
+  music_credit: true           # true = קרדיט "Music: ..." כשכתבת את שם השיר בהערה לקליפ
+
 # מצב ניסיון: כל עוד זה true — שום דבר לא באמת עולה לרשתות.
 # הצוות רק מדווח מה *היה* עושה. שנה ל-false רק כשהכול מוגדר ואתה מוכן.
 dry_run: true
@@ -29,18 +59,32 @@ publishing:
   # auto    = הצוות מתזמן ומעלה לבד
   mode: approve
   # אילו פלטפורמות פעילות
+  # live: true  = העלאה אמיתית לפלטפורמה הזו גם כש-dry_run: true (רק אם היא מחוברת).
+  #               עדיף להדליק מעמוד החיבורים או: agency live <פלטפורמה> on
+  # via: zernio | direct — יוטיוב/שורטס/טיקטוק עולים דרך Zernio כברירת מחדל.
+  #               direct = ישירות (בפרויקט גוגל לא מאומת הסרטונים עולים כפרטיים!)
+  # יוטיוב שורטס משתמש בחיבור ובמתג של יוטיוב, אלא אם כתבת לו live/via משלו.
   platforms:
+    # קליפ אנכי או קצר עולה ליוטיוב פעם אחת (כשורטס); סרטון ארוך — מלא ביוטיוב + קטע אנכי בשורטס
     youtube: {enabled: true}           # יוטיוב — סרטון רגיל 16:9
     youtube_shorts: {enabled: true}    # יוטיוב שורטס — אנכי עד 60 שניות
     tiktok: {enabled: true}            # טיקטוק
     instagram_reels: {enabled: true}   # אינסטגרם רילס
-    facebook: {enabled: false}         # עמוד פייסבוק
-    x: {enabled: true}                 # X (טוויטר)
+    facebook: {enabled: true}          # עמוד פייסבוק (רילס)
+    x: {enabled: false}                # X (טוויטר) — עוד לא מחובר
     # רדיט: מפרסמים רק בקהילות שרשמת כאן, למשל: ["GlobalOffensive"]
     reddit: {enabled: false, subreddits: []}
     discord: {enabled: false}          # דיסקורד (דרך Webhook שמוגדר ב-.env)
   timezone: "Asia/Jerusalem"           # אזור זמן לתזמון פוסטים
   stale_publishing_minutes: 120        # העלאה שנתקעה יותר מזה (התוכנה נסגרה) מסומנת "נכשל"
+  # השעות המוכחות שלך (שעון ישראל). האסטרטג סוטה מהן רק עם סיבה כתובה.
+  # אינסטגרם וטיקטוק תמיד יוצאים לפחות 30 דקות אחרי יוטיוב.
+  default_times:
+    youtube: "17:00"
+    youtube_shorts: "17:00"
+    facebook: "17:40"
+    instagram_reels: "20:00"
+    tiktok: "20:40"
 
 # כספים — כסף לא זז בלי אישור שלך, אף פעם.
 finance:
@@ -64,3 +108,36 @@ promotion:
 dashboard:
   host: "127.0.0.1"            # רק מהמחשב שלך. "0.0.0.0" = רשת ביתית, כניסה רק עם קישור סודי
   port: 8765
+  remote_access: false         # גישה מהטלפון (רק ב-Wi-Fi של הבית, כניסה עם קוד בן 6 ספרות)
+
+# מזהי פייסבוק/אינסטגרם (לא סודות). הייבוא מהסטודיו הקיים ממלא אותם לבד.
+meta:
+  page_id: ""                  # מזהה עמוד הפייסבוק
+  ig_user_id: ""               # מזהה חשבון האינסטגרם
+
+# הסטודיו הקיים (C:\CS2_STUDIO) — קריאה בלבד: מפתחות, מזהים והיסטוריה. אף פעם לא משנים אותו.
+studio:
+  dir: ""                      # ריק = מזהה לבד את C:\CS2_STUDIO. "off" = בלי קישור
+  double_post_guard: true      # לא להעלות קובץ שהסטודיו כבר העלה לאותה פלטפורמה
+
+# תיקיית קליפים: קליפ חדש שנזרק לתיקייה הופך לסרטון (מחכה לאישור שלך). כבוי עד שתדליק.
+inbox:
+  enabled: false
+  folders: []                  # ריק = Desktop\CS2_CLIPS אם קיימת, אחרת data/inbox
+  stable_seconds: 10           # הקובץ צריך להפסיק לגדול לפחות כך הרבה שניות
+  interval_s: 15               # כל כמה שניות לבדוק את התיקייה
+
+# עיבוד וידאו — ההגדרות המוכחות מהסטודיו (אנכי 1080x1920, שמע אחיד −14 LUFS, יוטיוב 1440p)
+media:
+  presets:
+    enabled: true              # false = חיתוך מהיר ופשוט (איכות נמוכה יותר)
+    youtube_hq: true           # גרסת 1440p ליוטיוב — יוטיוב נותן לה איכות צפייה גבוהה יותר
+    loudnorm: true             # עוצמת שמע אחידה (−14 LUFS) בקליפים האנכיים
+  preset_speed: ""             # ריק = כמו בסטודיו (slow). למחשב איטי אפשר "medium"
+
+# אישורים בטלגרם (לא חובה): כרטיס עם "אשר הכל" ישר לטלפון. מחברים מעמוד החיבורים ← טלגרם.
+notify:
+  telegram:
+    enabled: false
+    chat_id: ""                # מתמלא לבד אחרי הצימוד (שולחים לבוט /start עם הקוד)
+    send_preview: true         # לשלוח גם תצוגה מקדימה קטנה של הסרטון לפני הכרטיס

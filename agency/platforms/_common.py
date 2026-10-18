@@ -6,6 +6,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 from ..models import PostPlan, PostResult
 from .base import HTTP_TIMEOUT, PlatformAdapter
@@ -16,6 +17,9 @@ MISSING_CREDS_HE = "חסרים פרטי התחברות"
 
 _TOKEN_PARAM_RE = re.compile(r"(access_token|token|key|secret|password)=([^&\s'\"]+)", re.I)
 _DISCORD_WEBHOOK_RE = re.compile(r"(discord(?:app)?\.com/api/webhooks/\d+/)[\w-]+", re.I)
+# urllib3 errors split host and path ("host='discord.com' ... url: /api/webhooks/<id>/<token>"),
+# so the bare path is redacted too (any API version prefix).
+_WEBHOOK_PATH_RE = re.compile(r"(/api/(?:v\d+/)?webhooks/\d+/)[\w.-]+", re.I)
 
 
 class ApiError(RuntimeError):
@@ -61,11 +65,18 @@ class RealAdapter(PlatformAdapter):
         return [v for v in values if v and len(v) >= 4]
 
     def scrub(self, text: str) -> str:
-        """Remove secret values and token-looking query params from ``text``."""
-        for value in sorted(self.secret_values(), key=len, reverse=True):
+        """Remove secret values (and, for secret URLs, their path / query / long path parts,
+        which error texts often show without the host) and token-looking params from ``text``.
+        """
+        fragments: set[str] = set()
+        for value in self.secret_values():
+            fragments.add(value)
+            fragments.update(_url_fragments(value))
+        for value in sorted(fragments, key=len, reverse=True):
             text = text.replace(value, "***")
         text = _TOKEN_PARAM_RE.sub(lambda m: f"{m.group(1)}=***", text)
         text = _DISCORD_WEBHOOK_RE.sub(lambda m: f"{m.group(1)}***", text)
+        text = _WEBHOOK_PATH_RE.sub(lambda m: f"{m.group(1)}***", text)
         return text[:1000]
 
     def can_call_api(self, external_id: str | None) -> bool:
@@ -75,6 +86,19 @@ class RealAdapter(PlatformAdapter):
 
     def timeout(self) -> tuple[int, int]:
         return HTTP_TIMEOUT
+
+
+def _url_fragments(value: str) -> list[str]:
+    """Secret-bearing parts of a secret URL: its path, query and every long path segment."""
+    if "://" not in value:
+        return []
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return []
+    out = [p for p in (parts.path, parts.query) if p and len(p) >= 8]
+    out += [seg for seg in parts.path.split("/") if len(seg) >= 16]
+    return out
 
 
 # -------------------------------------------------------------------- text limits

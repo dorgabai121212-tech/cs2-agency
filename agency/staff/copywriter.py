@@ -1,9 +1,17 @@
-"""Copywriter: titles, descriptions, tags and hashtags per platform — limits enforced in code."""
+"""Copywriter: titles, descriptions, tags and hashtags per platform, brand rules and limits
+enforced in code.
+
+Public copy is ENGLISH (the owner's live studio posts in English for the international CS2
+audience). After the model writes, the code removes blocked words (a title containing one is
+rejected), puts the brand hashtags first, appends the AI label / music credit, and fits every
+platform's limits (the YouTube description in UTF-8 bytes).
+"""
 from __future__ import annotations
 
 import re
 from typing import Any
 
+from ..brand import Brand, detect_ai, detect_music, load_brand
 from ..models import Video
 from ..platforms._common import truncate_utf8
 from ._playbook import CS2_PLAYBOOK, PLATFORM_LIMITS, truncate
@@ -29,29 +37,42 @@ COPY_SCHEMA: dict[str, Any] = {
 YOUTUBE_PLATFORMS = {"youtube", "youtube_shorts"}
 YOUTUBE_DESCRIPTION_BYTES = 5000  # Hebrew letters are 2 bytes each
 
-# Platforms whose audience is international (copy in English).
-ENGLISH_PLATFORMS = {"reddit"}
+# Every platform is written in English (international CS2 audience), like the owner's studio.
+ENGLISH_PLATFORMS = {"youtube", "youtube_shorts", "tiktok", "instagram_reels", "facebook", "x",
+                     "reddit", "discord"}
 
-_TITLE_HE = {
-    "ace": "ACE מטורף ב-{map} עם {weapon}",
-    "clutch": "קלאץ' שאף אחד לא האמין בו ב-{map}",
-    "funny": "הרגע הכי מצחיק שהיה לי ב-{map}",
-    "fail": "הפייל הכי כואב ב-{map}",
-    "tutorial": "הטיפ שישדרג לכם את ה-{map}",
-    "montage": "מונטאז' {weapon} ב-{map}",
-    "highlight": "הייליט חולני ב-{map} עם {weapon}",
-    "other": "רגע מטורף ב-{map}",
-}
+# Mock titles: sell the player and the moment, trolling not dry, never a self-mocking fail.
 _TITLE_EN = {
-    "ace": "Insane {weapon} ACE on {map}",
-    "clutch": "Nobody believed in this clutch on {map}",
-    "funny": "The funniest moment I've had on {map}",
-    "fail": "The most painful fail on {map}",
-    "tutorial": "This {map} tip will instantly improve your game",
-    "montage": "{weapon} montage on {map}",
-    "highlight": "Crazy {weapon} highlight on {map}",
-    "other": "Crazy moment on {map}",
+    "ace": "{weapon} ACE on {map}, but you see the last bullet",
+    "clutch": "The {map} clutch nobody saw coming",
+    "funny": "Bro really thought he had me on {map}",
+    "fail": "He really thought that would work on {map}",
+    "tutorial": "The {map} trick that wins this round",
+    "montage": "{weapon} on {map}, every shot is a movie",
+    "highlight": "{weapon} on {map}, shot like a movie",
+    "other": "Legendary moment on {map}, shot like a movie",
 }
+_CLIP_WORDS = {"ace": "ace", "clutch": "clutch", "funny": "funny moment", "fail": "outplay",
+               "tutorial": "tip", "montage": "montage", "highlight": "highlight",
+               "other": "moment"}
+_TROLL_LINE = {
+    "ace": "Five down. Nobody asked for a replay, so here's a movie.",
+    "clutch": "They had the numbers. We had the last bullet.",
+    "funny": "He was so confident. That was the problem.",
+    "fail": "He had a plan. It did not include us.",
+    "tutorial": "Steal this before your teammates do.",
+    "montage": "Pick your favourite frame. We can't.",
+    "highlight": "Nobody in that lobby was ready for this.",
+    "other": "Rewatch it. We'll wait.",
+}
+_QUESTION = {
+    "ace": "Who's your pick for the fifth kill?",
+    "clutch": "Would you have taken this fight?",
+    "funny": "Would you have fallen for it?",
+    "fail": "Be honest, would you have peeked?",
+    "tutorial": "Did you know this one?",
+}
+_HEBREW_RE = re.compile(r"[֐-׿]")
 
 
 def _clean_tag(tag: str) -> str:
@@ -145,50 +166,143 @@ def enforce_limits(platform: str, copy: dict) -> dict:
     return {"title": title, "description": description, "tags": tags, "hashtags": hashtags}
 
 
+def _append_tail(platform: str, copy: dict, tail: list[str]) -> str:
+    """Description with the brand's tail lines (music credit, AI label) appended, cutting the
+    body - never the label - so the platform limit still holds together with the hashtags."""
+    description = copy["description"]
+    missing = [line for line in tail if line.lower() not in description.lower()]
+    if not missing:
+        return description
+    limits = PLATFORM_LIMITS.get(platform, {"description": 5000})
+    sep = "\n"
+    tail_text = sep.join(missing)
+    if "caption" in limits:
+        tags = " ".join(copy["hashtags"])
+        room = limits["caption"] - (len(tags) + 1 if tags else 0)
+    else:
+        room = limits.get("description", 5000)
+    body_room = room - len(tail_text) - (len(sep) if description else 0)
+    if body_room < 0:
+        return description  # the label cannot fit at all (never happens with real limits)
+    body = truncate(description, body_room) if description else ""
+    if platform in YOUTUBE_PLATFORMS:
+        byte_room = YOUTUBE_DESCRIPTION_BYTES - len((sep + tail_text).encode("utf-8"))
+        body = truncate_utf8(body, max(0, byte_room), truncate)
+    return f"{body}{sep}{tail_text}" if body else tail_text
+
+
+def finalize_copy(platform: str, raw: dict, brand: Brand, *, has_ai: bool = False,
+                  music: str | None = None, fallback_title: str = "") -> dict:
+    """Brand rules + platform limits for one platform's copy (what actually gets posted).
+
+    1. A title with a blocked word is REJECTED (replaced by ``fallback_title``); blocked words
+       are removed from the description, and tags/hashtags containing one are dropped.
+    2. Brand hashtags first, then the writer's, capped per platform (no #fyp spam).
+    3. ``enforce_limits`` (lengths, YouTube bytes), then the AI label / music credit lines.
+    """
+    title = str(raw.get("title") or "")
+    if not title.strip() or brand.blocked_in(title):
+        title = fallback_title or brand.clean(title) or brand.name
+    title = brand.clean(title)
+    description = brand.clean(raw.get("description") or "")
+    tags = [t for t in (raw.get("tags") or []) if str(t).strip() and brand.is_clean(t)]
+    if platform == "reddit":
+        hashtags: list[str] = []
+    else:
+        hashtags = brand.merge_hashtags(platform, list(raw.get("hashtags") or []))
+    out = enforce_limits(platform, {"title": title, "description": description, "tags": tags,
+                                    "hashtags": hashtags})
+    out["description"] = _append_tail(platform, out, brand.tail_lines(platform, has_ai=has_ai,
+                                                                      music=music))
+    return out
+
+
 class Copywriter(StaffMember):
-    """Writes platform-native copy in Hebrew (and English where the audience is international)."""
+    """Writes platform-native English copy in the brand's voice (owner notes stay Hebrew)."""
 
     name = "copywriter"
     title_he = "קופירייטר"
-    role_prompt = (
-        "You are the Copywriter of a marketing agency for an Israeli Counter-Strike 2 creator. "
-        "You write platform-native copy that earns clicks honestly (the clip must deliver what "
-        "the title promises - no fake clickbait, no fake giveaways, no 'sub for sub').\n"
-        "Language: write in the channel's primary language (Hebrew by default) using the CS2 "
-        "English slang Israeli gamers actually use (ACE, clutch, one-tap, eco, AWP, rush B). "
-        "Reddit copy is always English. Add a short English line in descriptions for the "
-        "international audience when the channel has a secondary language.\n"
-        "Per platform:\n"
-        "- youtube: searchable title (map + clip type + weapon), <=70 chars ideal (hard 100). "
-        "Description: first 2 lines are the hook, then context, then a CTA to subscribe, 3 "
-        "hashtags max (#CS2 first). Tags: CS2, Counter-Strike 2, map, weapon, clip type, "
-        "Hebrew variants (קאונטר סטרייק).\n"
-        "- youtube_shorts: very short punchy title <=50 chars, include #Shorts.\n"
-        "- tiktok: caption that hooks + asks a question to drive comments, 3-5 hashtags "
-        "(#cs2 #counterstrike2 plus niche tags like #cs2clips; no #fyp stuffing).\n"
-        "- instagram_reels: caption with a hook line, a question, 5-10 hashtags (max 30).\n"
-        "- x: one punchy line, 1-2 hashtags, whole post <=280 chars.\n"
-        "- facebook: friendly community tone, short.\n"
-        "- reddit: descriptive, humble English title, no hashtags, no emojis spam.\n"
-        "- discord: short announcement for the creator's own server.\n"
-        "Return one entry per requested platform.\n\n" + CS2_PLAYBOOK)
+
+    @property
+    def brand(self) -> Brand:
+        return load_brand(self.settings)
+
+    @property
+    def role_prompt(self) -> str:  # type: ignore[override]
+        return self.build_prompt(self.brand)
+
+    @staticmethod
+    def build_prompt(brand: Brand) -> str:
+        """The copywriter's system prompt for this brand (ported from the studio's prompt)."""
+        tags = " ".join(brand.required_hashtags("youtube"))
+        return (
+            f'You are the Copywriter / SEO specialist of "{brand.name}" ({brand.handle}), a '
+            "Counter-Strike 2 channel run by Dor (Israel). The channel's signature: movie-grade "
+            "CS2 moments rebuilt from real demos with cinematic cameras, real motion blur and "
+            "bullet-time on the deciding bullet, sometimes with a short AI-restyled shot.\n"
+            "You write the public text for every requested platform. Answer only with the "
+            "structured output.\n\n"
+            + brand.prompt_block() + "\n\n"
+            "Hard rules:\n"
+            "- Public copy is in ENGLISH for the international CS2 audience (no Hebrew in "
+            "titles, captions or tags).\n"
+            "- Sell the PLAYER and the MOMENT, never the technique. Good: \"ropz's 1v4 that "
+            "saved the Major, but you see the last bullet\". Bad: \"HLAE Blender bullet-time "
+            "cinematic\".\n"
+            "- Never invent facts. Use only what the analysis and Dor's note say; never guess a "
+            "pro's name, a score or an event. Dor's own gameplay is played by "
+            f'"{brand.name}" - never pretend it is a pro.\n'
+            "- Never imply the content is official or endorsed by Valve, a team, a player or a "
+            "tournament organiser. No mocking real players. Nothing political.\n"
+            "- Funny, trolling, confident - never dry. The hook lands in the first second: the "
+            "first line names the moment (weapon, map, ace/clutch/1vX). If a real viewer "
+            "comment is given, open with it in quotes and answer it.\n"
+            "- Never a self-mocking fail gag. A clip of an enemy's mistake is the ENEMY's fail.\n"
+            "- Titles build curiosity with a concrete hook (stakes, numbers, the impossible "
+            "part). No clickbait lies, no ALL CAPS titles, at most one emoji per caption and "
+            "none in YouTube titles.\n"
+            "- Never mention skin gambling, case opening, betting, cheats or hacks, \"free "
+            "skins\", promo codes or giveaways. No calls to sub4sub, no fake engagement.\n"
+            "- Hashtags go ONLY in the `hashtags` arrays, never inside titles/descriptions; the "
+            f"system puts the brand hashtags ({tags}) first and appends the AI label and the "
+            "music credit itself.\n\n"
+            "Per platform:\n"
+            "- youtube (16:9): title <= 70 chars with the searchable words (CS2 + player/map/"
+            "weapon), no emoji. Description: line 1 = searchable words incl. \"CS2 edit\", then "
+            "1-2 lines of story, then the bio line. Tags: 10-15 search phrases (CS2, "
+            "Counter-Strike 2, CS2 edit, cs2 highlights, map, weapon, clip type).\n"
+            "- youtube_shorts: one title of 40-60 chars, curiosity + one keyword.\n"
+            "- tiktok: the FIRST caption line contains the words people search (CS2, map, "
+            "weapon, ace/clutch/1vX); 3-5 hashtags; never #fyp / #foryou / #viral.\n"
+            "- instagram_reels: short caption that names \"Counter-Strike 2\" explicitly, "
+            "max 5 hashtags.\n"
+            "- facebook: short caption, 3-5 hashtags.\n"
+            "- x: one punchy line (<= 200 chars), no links, 1-2 hashtags.\n"
+            "- reddit: descriptive, humble title, no hashtags, no emojis, no self-promo tone.\n"
+            "- discord: a short hype line for Dor's own server.\n"
+            "Return one entry per requested platform.\n\n" + CS2_PLAYBOOK)
 
     def write(self, video: Video, analysis: dict, platforms: list[str]) -> dict[str, dict]:
-        """Copy per platform: {platform: {title, description, tags, hashtags}} (limits enforced)."""
-        self.status("working", f"כותב טקסטים ל-{len(platforms)} פלטפורמות")
-        mock = {"posts": [{"platform": p, **self._mock_copy(video, analysis, p)}
-                          for p in platforms]}
+        """Copy per platform: {platform: {title, description, tags, hashtags}} (brand rules and
+        limits enforced in code)."""
+        brand = self.brand
+        label = self._label(video)
+        self.status("working", f"כותב כותרות ל\"{label}\"" if label else "כותב כותרות")
+        has_ai = bool(analysis.get("ai_shots")) or detect_ai(video.title_hint)
+        music = (str(analysis.get("music") or "") or str((video.meta or {}).get("music") or "")
+                 or detect_music(video.title_hint))
+        comment = str((video.meta or {}).get("viewer_comment") or "").strip()
+        fallbacks = {p: self._mock_copy(video, analysis, p, brand) for p in platforms}
+        mock = {"posts": [{"platform": p, **fallbacks[p]} for p in platforms]}
         user = (
-            f"Channel: {self.settings.get('channel.name') or '(unnamed)'} "
-            f"handle={self.settings.get('channel.handle') or '-'}; "
-            f"primary language={self.language}; secondary="
-            f"{self.settings.get('channel.secondary_language', 'en')}.\n"
-            f"Creator's title hint: {video.title_hint or '(none)'}\n"
+            f"Dor's note / title hint: {video.title_hint or '(none)'}\n"
             f"Analysis: clip_type={analysis.get('clip_type')}, map={analysis.get('map')}, "
             f"weapons={analysis.get('weapons')}, mood={analysis.get('mood')}, "
-            f"score={analysis.get('score_1_10')}/10\n"
-            f"Summary (he): {analysis.get('summary_he')}\nSummary (en): "
-            f"{analysis.get('summary_en')}\nHighlights: {analysis.get('highlights')}\n"
+            f"score={analysis.get('score_1_10')}/10, hook at {analysis.get('hook_seconds')}s\n"
+            f"Summary: {analysis.get('summary_en')}\nHighlights: {analysis.get('highlights')}\n"
+            f"Clip has AI-restyled shots: {'yes' if has_ai else 'no'}\n"
+            f"Music credit: {music or '(none given - do not invent one)'}\n"
+            f"Real viewer comment to open with: {comment or '(none)'}\n"
             f"Write copy for these platforms: {', '.join(platforms)}.")
         data = self.llm.complete_json(self.role_prompt, user, COPY_SCHEMA, mock_value=mock)
 
@@ -196,49 +310,81 @@ class Copywriter(StaffMember):
                        if isinstance(p, dict)}
         out: dict[str, dict] = {}
         for p in platforms:
-            raw = by_platform.get(p) or self._mock_copy(video, analysis, p)
-            out[p] = enforce_limits(p, raw)
-        self.status("idle", "הטקסטים מוכנים")
+            raw = by_platform.get(p) or fallbacks[p]
+            out[p] = finalize_copy(p, raw, brand, has_ai=has_ai, music=music,
+                                   fallback_title=fallbacks[p]["title"])
+        self.status("idle", "הכותרות מוכנות")
         return out
 
     # ------------------------------------------------------------------ mock copy
-    def _mock_copy(self, video: Video, analysis: dict, platform: str) -> dict:
+    @staticmethod
+    def _label(video: Video) -> str:
+        hint = (video.title_hint or "").strip()
+        return truncate(hint, 40) if hint else ""
+
+    @staticmethod
+    def _hint_title(video: Video, brand: Brand) -> str:
+        """The owner's own English title hint, when it is usable as a public title."""
+        hint = re.sub(r"\s+", " ", (video.title_hint or "")).strip()
+        hint = re.split(r"\s*[|;]\s*|\s+-\s+(?:music|song)\b|\b(?:music|song)\s*:", hint,
+                        flags=re.I)[0].strip()
+        hint = re.sub(r"[\s,(\-]*\bAI\b\)?\s*$", "", hint).strip(" ,-")  # "Deagle 3K, AI"
+        if (not 8 <= len(hint) <= 70 or _HEBREW_RE.search(hint) or not brand.is_clean(hint)
+                or "#" in hint or hint.isupper()):
+            return ""
+        return hint[0].upper() + hint[1:]
+
+    def _mock_copy(self, video: Video, analysis: dict, platform: str,
+                   brand: Brand | None = None) -> dict:
+        """Deterministic English copy in the brand's voice (offline mode and fallbacks)."""
+        brand = brand or self.brand
         clip = analysis.get("clip_type") or "highlight"
+        if clip not in _TITLE_EN:
+            clip = "other"
         cs_map = analysis.get("map") or "CS2"
         weapon = (analysis.get("weapons") or ["AK-47"])[0]
-        english = platform in ENGLISH_PLATFORMS or self.language == "en"
         fmt = {"map": cs_map, "weapon": weapon}
-        title_en = _TITLE_EN.get(clip, _TITLE_EN["other"]).format(**fmt)
-        title = title_en if english else _TITLE_HE.get(clip, _TITLE_HE["other"]).format(**fmt)
-        if video.title_hint and not english:
-            title = video.title_hint
-        summary = analysis.get("summary_en" if english else "summary_he") or title
-        question = ("Would you have taken this fight?" if english
-                    else "הייתם לוקחים את הקרב הזה? תכתבו בתגובות")
-        map_tag = cs_map.replace(" ", "")
-        hashtags = ["#CS2", "#CounterStrike2", f"#{map_tag}", f"#{clip}", "#cs2clips"]
-        tags = ["CS2", "Counter-Strike 2", "counter strike 2", cs_map, weapon, clip,
-                f"CS2 {clip}", f"{cs_map} {clip}", "קאונטר סטרייק", "קאונטר סטרייק 2",
-                "CS2 ישראל", "cs2 highlights"]
-        handle = self.settings.get("channel.handle") or ""
-        cta = "" if english else "\nתעשו לייק ותירשמו לערוץ לעוד קליפים"
-        secondary = "" if english else f"\n\nEN: {analysis.get('summary_en') or title_en}"
+        title = self._hint_title(video, brand) or _TITLE_EN[clip].format(**fmt)
+        clip_word = _CLIP_WORDS[clip]
+        search_line = f"CS2 {cs_map} {weapon} {clip_word}".replace("CS2 CS2", "CS2")
+        troll = _TROLL_LINE[clip]
+        question = _QUESTION.get(clip, "Which moment should we shoot next?")
+        comment = str((video.meta or {}).get("viewer_comment") or "").strip()
+        opener = f"\"{truncate(comment, 120)}\" - challenge accepted." if comment else ""
+        summary = str(analysis.get("summary_en") or "").strip()
+        map_tag = re.sub(r"[^A-Za-z0-9]", "", cs_map)
+        extra_tags = [f"#{map_tag}" if map_tag and map_tag != "CS2" else "", "#cs2clips"]
+        tags = ["CS2", "Counter-Strike 2", "CS2 edit", "cs2 highlights", cs_map, weapon,
+                f"CS2 {clip_word}", f"{cs_map} {clip_word}", "counter strike 2",
+                f"{brand.name} CS2", "cinematic CS2"]
+        lines = [line for line in (opener, troll) if line]
         if platform == "youtube":
-            desc = f"{summary}\n{question}{cta}{secondary}"
-            return {"title": f"{title} | CS2", "description": desc, "tags": tags,
-                    "hashtags": hashtags[:3]}
+            desc = "\n".join(x for x in (f"{search_line} | CS2 edit", *lines, summary, brand.bio)
+                             if x)
+            return {"title": title, "description": desc,
+                    "tags": tags, "hashtags": list(brand.hashtags)}
         if platform == "youtube_shorts":
-            return {"title": title, "description": f"{summary}\n{question}", "tags": tags,
-                    "hashtags": ["#Shorts", "#CS2", f"#{map_tag}"]}
-        if platform in ("tiktok", "instagram_reels"):
-            return {"title": title, "description": f"{title} — {question}", "tags": tags[:8],
-                    "hashtags": hashtags + (["#gaming", "#fps"] if platform != "tiktok"
-                                            else [])}
+            return {"title": title, "description": "\n".join([search_line, *lines]),
+                    "tags": tags, "hashtags": list(brand.hashtags)}
+        if platform == "tiktok":
+            return {"title": title, "description": "\n".join([f"{search_line}. {title}",
+                                                              question]),
+                    "tags": tags[:8], "hashtags": [*brand.hashtags, *extra_tags]}
+        if platform == "instagram_reels":
+            return {"title": title,
+                    "description": "\n".join([f"Counter-Strike 2 on {cs_map}: {title}.",
+                                              *lines[:1], question]),
+                    "tags": tags[:8], "hashtags": [*brand.hashtags, *extra_tags]}
+        if platform == "facebook":
+            return {"title": title, "description": "\n".join([f"{title}.", troll, question]),
+                    "tags": tags[:10], "hashtags": [*brand.hashtags, extra_tags[0]]}
         if platform == "x":
-            text = f"{title}. {question}" + (f" {handle}" if handle else "")
-            return {"title": title, "description": text, "tags": [], "hashtags": ["#CS2"]}
+            return {"title": title, "description": f"{title}. {troll}", "tags": [],
+                    "hashtags": list(brand.hashtags[:2])}
         if platform == "reddit":
-            return {"title": f"{title_en} (CS2)", "description": analysis.get("summary_en")
-                    or title_en, "tags": [], "hashtags": []}
-        return {"title": title, "description": f"{summary}\n{question}", "tags": tags[:10],
-                "hashtags": hashtags[:3]}
+            plain = f"{weapon} {clip_word} on {cs_map}, rebuilt from the real demo (CS2)"
+            return {"title": plain.encode("ascii", "ignore").decode().strip(),
+                    "description": summary.encode("ascii", "ignore").decode(), "tags": [],
+                    "hashtags": []}
+        return {"title": title, "description": f"New clip is out: {title}. {troll}",
+                "tags": tags[:10], "hashtags": list(brand.hashtags)}

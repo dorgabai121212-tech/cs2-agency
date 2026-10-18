@@ -19,6 +19,12 @@ SECRETS = {
     "reddit": ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USERNAME", "REDDIT_PASSWORD"],
     "discord": ["DISCORD_WEBHOOK_URL"],
 }
+# v2: these publish through Zernio by default (``via: zernio``); ``via: direct`` keeps SECRETS.
+ZERNIO_KEYS = {"youtube", "youtube_shorts", "tiktok"}
+
+
+def routed_secrets(key: str) -> list[str]:
+    return ["ZERNIO_API_KEY"] if key in ZERNIO_KEYS else SECRETS[key]
 
 
 def make_plan(key: str, path: str) -> PostPlan:
@@ -42,15 +48,16 @@ def test_registry_resolves_all_keys(settings):
     for key in registry.ALL_KEYS:
         adapter = registry.get_adapter(key, settings)
         assert adapter.key == key
-        assert adapter.required_secrets == SECRETS[key]
+        assert adapter.required_secrets == routed_secrets(key)
         assert adapter.display_he
+        assert registry.adapter_class(key).required_secrets == SECRETS[key]  # direct path
     with pytest.raises(KeyError):
         registry.get_adapter("myspace", settings)
 
 
 @pytest.mark.parametrize("key", registry.ALL_KEYS)
 def test_dry_run_makes_no_network_calls(key, settings, tiny_video, no_network, monkeypatch):
-    for name in SECRETS[key]:  # even fully configured, dry run must not touch the network
+    for name in SECRETS[key] + routed_secrets(key):  # even fully configured: no network
         monkeypatch.setenv(name, "https://example.invalid/secret-value-1234")
     adapter = registry.get_adapter(key, settings)
     assert settings.dry_run is True
@@ -71,7 +78,7 @@ def test_unconfigured_real_mode_fails_honestly(key, settings, tiny_video, no_net
     result = adapter.upload(make_plan(key, str(tiny_video)))
     assert result.ok is False and result.dry_run is False
     assert result.error.startswith("חסרים פרטי התחברות: ")
-    for name in SECRETS[key]:
+    for name in routed_secrets(key):
         assert name in result.error
 
 
@@ -110,6 +117,7 @@ def test_discord_happy_path_and_no_token_leak(settings, tiny_video, monkeypatch)
 
 def test_tiktok_happy_path(settings, tiny_video, monkeypatch):
     settings.raw["dry_run"] = False
+    settings.raw["publishing"]["platforms"]["tiktok"]["via"] = "direct"
     monkeypatch.setenv("TIKTOK_ACCESS_TOKEN", "act.tiktok-secret")
     size = tiny_video.stat().st_size
     posts, puts = [], []

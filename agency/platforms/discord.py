@@ -9,7 +9,8 @@ import json
 
 from ..config import secret
 from ..models import PostPlan, PostResult
-from ._common import RealAdapter, check_response, normalize_hashtags, truncate, video_file
+from ._common import (ApiError, RealAdapter, check_response, normalize_hashtags, truncate,
+                      video_file)
 
 CONTENT_LIMIT = 2000           # Discord message content limit
 DEFAULT_MAX_FILE_MB = 10       # current default upload cap for servers without boosts
@@ -52,14 +53,18 @@ class DiscordAdapter(RealAdapter):
             return self.fail("אין תוכן לשליחה לדיסקורד")
 
         params = {"wait": "true"}
-        if attach is not None:
-            with attach.open("rb") as fh:
-                resp = requests.post(
-                    url, params=params, timeout=self.timeout(),
-                    data={"payload_json": json.dumps(payload, ensure_ascii=False)},
-                    files={"files[0]": (attach.name, fh, "video/mp4")})
-        else:
-            resp = requests.post(url, params=params, json=payload, timeout=self.timeout())
+        try:  # the webhook URL IS the secret: never let a requests error text carry it
+            if attach is not None:
+                with attach.open("rb") as fh:
+                    resp = requests.post(
+                        url, params=params, timeout=self.timeout(),
+                        data={"payload_json": json.dumps(payload, ensure_ascii=False)},
+                        files={"files[0]": (attach.name, fh, "video/mp4")})
+            else:
+                resp = requests.post(url, params=params, json=payload, timeout=self.timeout())
+        except requests.RequestException as exc:
+            raise ApiError(f"Discord webhook: אין חיבור לדיסקורד ({type(exc).__name__})") \
+                from None
         data = check_response(resp, "Discord webhook")
         message_id = data.get("id") or "sent"
         return self.success(str(message_id), None)
