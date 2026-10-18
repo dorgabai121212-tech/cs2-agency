@@ -38,4 +38,24 @@ Clips are produced in `C:\CS2_CINE` and finished clips land in `C:\Users\dorga\D
 3. Episode 3 "Mozart phonk" (`Desktop\CS2_CLIPS\SHORT_EP3_MOZART_PHONK.mp4`) — waiting for approval.
 4. YouTube phone verification (custom thumbnails, >15 min videos).
 
+## Verified on the new PC (18/10/2026, read-only check by the PC session)
+- PC name DESKTOP-4P10HRU. Python 3.12.10, git 2.55, ffmpeg n9.0.1 at `C:\CS2_STUDIO\tools\ffmpeg`.
+  `git ls-remote` to the private repo works; `gh` is not logged in.
+- **Credential Manager service `cs2studio` is EMPTY on the new PC.** zernio, meta_page_token,
+  youtube_oauth, telegram_bot and hmac_key are all missing; the credentials did not migrate.
+  The accounts are still connected on the platform side: YouTube and TikTok inside Zernio, and the
+  Meta app is Live. So the owner has to re-enter keys once:
+  - **Zernio API key**: zernio.com → Settings → API Keys → new key. One key brings back YouTube +
+    TikTok without any re-login.
+  - **Meta Page token**: has to be generated again.
+  - **Telegram bot token**: @BotFather → /mybots → API Token.
+- `studio.db` exists and has kv `meta_ids` → Page id and IG user id can be imported.
+- Scheduled tasks "CS2Studio Daemon"/"CS2Studio Watchdog" exist but are DISABLED; daemon.log last
+  written 13/10. The old studio is not running.
+- Last published package: Episode 2 "the 4th guy" (10/10, YT+FB+IG+TT). Episode 3 was rejected by
+  the owner. A new short `Desktop\CS2_CLIPS\SHORT_DEAGLE_MOVIE.mp4` (Deagle 3K, AI) awaits his decision.
+UX consequence: when the studio is found but its keys are missing, the import card must say it
+plainly and positively ("מצאתי את הסטודיו. החיבורים עצמם שמורים אצל הפלטפורמות — צריך רק להדביק מפתח אחד של Zernio כדי להחזיר את יוטיוב וטיקטוק"),
+then lead straight into the Zernio key wizard, followed by Meta and Telegram.
+
 See SPEC_V2.md §11 for how the agency aligns with all of this.

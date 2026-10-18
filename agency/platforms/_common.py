@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from ..config import secret
 from ..models import PostPlan, PostResult
 from .base import HTTP_TIMEOUT, PlatformAdapter
 
@@ -58,7 +57,7 @@ class RealAdapter(PlatformAdapter):
                           external_id=str(external_id), url=url, error=None)
 
     def secret_values(self) -> list[str]:
-        values = [secret(name) for name in self.required_secrets]
+        values = [self.credential(name) for name in self.required_secrets]
         return [v for v in values if v and len(v) >= 4]
 
     def scrub(self, text: str) -> str:

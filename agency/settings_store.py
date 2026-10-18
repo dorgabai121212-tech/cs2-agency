@@ -5,7 +5,9 @@
   file atomically and keeps the previous version as ``config.yaml.bak``.
 - :func:`env_set` / :func:`env_unset` edit ``.env`` atomically, keep comments and line order,
   quote values safely and update ``os.environ`` of this process. Only the secret names the
-  platform adapters declare (plus ``ANTHROPIC_API_KEY``) are accepted.
+  platform adapters declare (plus ``ANTHROPIC_API_KEY``, ``ZERNIO_API_KEY`` and
+  ``TELEGRAM_BOT_TOKEN``) are accepted. (New secrets normally go to the OS keyring through
+  :func:`agency.config.store_secret`; ``.env`` is the fallback.)
 
 Values are never logged or put in exception messages (only names are).
 """
@@ -28,14 +30,22 @@ from .config import PACKAGE_ROOT, DEFAULTS, ConfigError, Settings, _deep_merge, 
 _config_lock = threading.Lock()
 _env_lock = threading.Lock()
 
-EXTRA_ENV_NAMES = ("ANTHROPIC_API_KEY",)
+EXTRA_ENV_NAMES = ("ANTHROPIC_API_KEY", "ZERNIO_API_KEY", "TELEGRAM_BOT_TOKEN")
+# Listed by adapters as "required_secrets" but not secret themselves (ids, a file path,
+# a user name): they may appear in config.yaml (e.g. meta.ig_user_id).
+NOT_SECRET_NAMES = frozenset({"IG_USER_ID", "FB_PAGE_ID", "YOUTUBE_CLIENT_SECRETS_FILE",
+                              "REDDIT_USERNAME"})
 MAX_ENV_VALUE_LEN = 8192
 MAX_TEXT_LEN = 500
+MAX_LONG_TEXT_LEN = 3000
 
-# Kinds: "bool" | "int" | "number" (>= 0) | "str" | "str_list" | ("enum", {...}) | "hhmm"
+# Kinds: "bool" | "int" | "number" (>= 0) | "str" | "text" (long str) | "str_list" |
+#        ("enum", {...}) | "hhmm" | "id" (digits, e.g. a Meta page id or Telegram chat id) |
+#        "str_or_bool"
 PLATFORM_FIELDS: dict[str, Any] = {
     "enabled": "bool",
     "live": "bool",
+    "via": ("enum", {"zernio", "direct"}),
     "subreddits": "str_list",
     "privacy": ("enum", {"public", "unlisted", "private"}),
     "privacy_level": ("enum", {"SELF_ONLY", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR",
@@ -74,7 +84,31 @@ SCHEMA: dict[str, Any] = {
     "dashboard.max_upload_gb": "number",
     "dashboard.remote_access": "bool",
     "importer.extra_roots": "str_list",
+    # v2 (SPEC_V2 §11): ids are not secrets; the studio link is read-only.
+    "meta.page_id": "id",
+    "meta.ig_user_id": "id",
+    "studio.dir": "str",
+    "studio.double_post_guard": "bool",
+    "inbox.enabled": "bool",
+    "inbox.folders": "str_list",
+    "inbox.stable_seconds": "number",
+    "inbox.interval_s": "number",
+    "brand.name": "str",
+    "brand.handle": "str",
+    "brand.bio": "str",
+    "brand.hashtags": "str_list",
+    "brand.blocked_words": "str_list",
+    "brand.style_notes": "text",
+    "brand.ai_label": "str_or_bool",
+    "brand.music_credit": "str_or_bool",
+    "notify.telegram.enabled": "bool",
+    "notify.telegram.chat_id": "id",
+    "media.presets.enabled": "bool",
+    "media.presets.youtube_hq": "bool",
+    "media.presets.loudnorm": "bool",
 }
+# publishing.default_times.<platform> = "HH:MM" (proven posting times)
+DEFAULT_TIME_PREFIX = "publishing.default_times."
 
 # Key names that must never be stored in config.yaml (secrets belong in .env).
 _SECRET_KEY_RE = re.compile(
@@ -144,17 +178,24 @@ def secrets_dir(settings: Settings) -> Path:
 
 
 def allowed_env_names() -> list[str]:
-    """Secret names we may write: every adapter's ``required_secrets`` + ANTHROPIC_API_KEY."""
+    """Secret names we may write: every adapter's ``required_secrets`` (direct adapters and
+    the Zernio route) + ANTHROPIC_API_KEY + ZERNIO_API_KEY + TELEGRAM_BOT_TOKEN."""
     from .platforms import registry
 
     names: list[str] = list(EXTRA_ENV_NAMES)
+    classes: list[Any] = []
     for key in registry.ALL_KEYS:
         try:
-            cls = registry.adapter_class(key)
+            classes.append(registry.adapter_class(key))
         except Exception:  # a broken adapter module must not break the settings page
             continue
+    try:
+        classes.append(registry.zernio_class())
+    except Exception:
+        pass
+    for cls in classes:
         for name in getattr(cls, "required_secrets", []) or []:
-            if name not in names:
+            if isinstance(name, str) and name not in names:
                 names.append(name)
     return names
 
@@ -181,12 +222,17 @@ def _schema_kind(dotted: str) -> Any:
     parts = dotted.split(".")
     if len(parts) == 4 and parts[:2] == ["publishing", "platforms"] and parts[2] in ALL_KEYS:
         return PLATFORM_FIELDS.get(parts[3])
+    if len(parts) == 3 and dotted.startswith(DEFAULT_TIME_PREFIX) and parts[2] in ALL_KEYS:
+        return "hhmm"
     return None
 
 
 def _looks_secret(value: Any) -> bool:
+    from .config import secret
+
     texts = value if isinstance(value, list) else [value]
-    known = [v for n in allowed_env_names() if (v := os.environ.get(n)) and len(v) >= 8]
+    known = [v for n in allowed_env_names()
+             if n not in NOT_SECRET_NAMES and (v := secret(n)) and len(v) >= 8]
     for text in texts:
         if not isinstance(text, str):
             continue
@@ -214,6 +260,23 @@ def _check_value(dotted: str, kind: Any, value: Any) -> Any:
                 raise SettingsError(f"{bad}: צריך להיות מספר שלם")
             return int(value)
         return int(value) if float(value).is_integer() else float(value)
+    if kind == "str_or_bool":
+        if isinstance(value, bool):
+            return value
+        kind = "str"
+    if kind == "id":
+        if isinstance(value, int) and not isinstance(value, bool):
+            value = str(value)
+        if not isinstance(value, str) or not re.fullmatch(r"-?\d{0,40}", value.strip()):
+            raise SettingsError(f"{bad}: צריך להיות מספר מזהה (ספרות בלבד)")
+        return value.strip()
+    if kind == "text":
+        if not isinstance(value, str):
+            raise SettingsError(f"{bad}: צריך להיות טקסט")
+        value = "".join(ch for ch in value if ch in "\n " or ch.isprintable()).strip()
+        if len(value) > MAX_LONG_TEXT_LEN:
+            raise SettingsError(f"{bad}: ארוך מדי")
+        return value
     if kind == "str" or kind == "hhmm" or isinstance(kind, tuple):
         if not isinstance(value, str):
             raise SettingsError(f"{bad}: צריך להיות טקסט")
@@ -312,7 +375,8 @@ def _quote_env(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
-def _check_env_names(names: Iterable[str]) -> list[str]:
+def check_env_names(names: Iterable[str]) -> list[str]:
+    """Return ``names`` as a list, or raise SettingsError for any name we may not store."""
     allowed = set(allowed_env_names())
     names = list(names)
     unknown = [n for n in names if n not in allowed]
@@ -321,7 +385,8 @@ def _check_env_names(names: Iterable[str]) -> list[str]:
     return names
 
 
-def _check_env_value(name: str, value: Any) -> str:
+def check_env_value(name: str, value: Any) -> str:
+    """Normalised secret value (stripped) or SettingsError (never echoes the value)."""
     if not isinstance(value, str):
         raise SettingsError(f"הערך של {name} חייב להיות טקסט")
     value = value.strip()
@@ -369,8 +434,8 @@ def _rewrite_env(path: Path, updates: Mapping[str, str | None]) -> None:
 
 def env_set(root: Path, mapping: Mapping[str, str]) -> None:
     """Save secrets to ``<root>/.env`` (atomic, comments kept) and to ``os.environ``."""
-    names = _check_env_names(mapping.keys())
-    values = {name: _check_env_value(name, mapping[name]) for name in names}
+    names = check_env_names(mapping.keys())
+    values = {name: check_env_value(name, mapping[name]) for name in names}
     if not values:
         return
     with _env_lock:
@@ -380,7 +445,7 @@ def env_set(root: Path, mapping: Mapping[str, str]) -> None:
 
 def env_unset(root: Path, names: Iterable[str]) -> None:
     """Blank the given secrets in ``<root>/.env`` (the template line stays) and in os.environ."""
-    names = _check_env_names(names)
+    names = check_env_names(names)
     if not names:
         return
     with _env_lock:
@@ -394,3 +459,40 @@ def env_unset(root: Path, names: Iterable[str]) -> None:
 def env_has(name: str) -> bool:
     """True when the secret ``name`` has a non-empty value in this process."""
     return bool(os.environ.get(name))
+
+
+def env_file_has(root: Path, name: str) -> bool:
+    """True when ``<root>/.env`` has a non-empty line for ``name`` (value is not returned)."""
+    path = env_path(root)
+    if not path.exists():
+        return False
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        match = _ENV_LINE_RE.match(line)
+        if match and match.group(1) == name:
+            rest = line[match.end():].strip()
+            if rest and rest not in ("''", '""') and not rest.startswith("#"):
+                return True
+    return False
+
+
+# --------------------------------------------------------------------------- shortcuts
+def set_platform_live(settings: Settings, key: str, on: bool) -> Settings:
+    """Owner's per-platform "real upload" switch (``publishing.platforms.<key>.live``).
+
+    The caller must have shown the confirm dialog. Turning ON is refused unless the platform
+    is connected (credentials present) — a live switch on an unconnected platform would only
+    produce failures.
+    """
+    from .platforms import registry
+
+    if key not in registry.ALL_KEYS:
+        raise SettingsError(f"פלטפורמה לא מוכרת: {key}")
+    if not isinstance(on, bool):
+        raise SettingsError("צריך לבחור כן או לא")
+    if on and not registry.get_adapter(key, settings).configured():
+        raise SettingsError("אי אפשר להעלות באמת לפלטפורמה שלא מחוברת — חבר אותה קודם")
+    return update_config(settings, {"publishing": {"platforms": {key: {"live": on}}}})
